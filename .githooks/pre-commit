@@ -1,0 +1,19 @@
+#!/bin/sh
+# commit 前に Linter と型チェックを走らせ、失敗したら commit を止める。
+set -e
+
+if [ ! -x node_modules/.bin/biome ]; then
+	echo "pre-commit: Biome が見つかりません。npm install を実行してください。" >&2
+	exit 1
+fi
+
+echo "pre-commit: Biome（lint・書式）を確認しています..."
+node_modules/.bin/biome check --no-errors-on-unmatched .
+
+# 型チェックは tsconfig.json と TypeScript がそろっているときだけ行う。
+if [ -f tsconfig.json ] && [ -x node_modules/.bin/tsc ]; then
+	echo "pre-commit: tsc --noEmit で型を確認しています..."
+	node_modules/.bin/tsc --noEmit
+else
+	echo "pre-commit: tsconfig.json または TypeScript がないため、型チェックを省略します。"
+fi

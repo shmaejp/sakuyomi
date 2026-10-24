@@ -8,6 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Git リポジトリとして管理しており、GitHub の非公開リポジトリ `shmaejp/sakuyomi`（リモート名 `origin`、既定ブランチ `main`）に接続している。コードを追加したら、このファイルに実際のコマンドと構成を追記すること。
 
+## コード品質の自動チェック
+
+- 書式と Linter は Biome（`biome.json`）に一本化している。Prettier・ESLint は入れない。Markdown は対象外
+- 初回は `npm install`。`prepare` で `git config core.hooksPath .githooks` が設定される
+- 整形：`npm run format`／Lint：`npm run lint`
+- Claude Code がファイルを編集・作成すると、PostToolUse Hook（`.claude/settings.json`）がそのファイルを Biome で整形する
+- commit 前に `.githooks/pre-commit` が `biome check` を走らせる。`tsconfig.json` と TypeScript があれば `tsc --noEmit` も走らせる。失敗すると commit が止まる
+
 ## 技術スタック（決定済み・未実装）
 
 - **言語**：TypeScript（スマホ側・サーバー側とも）。両方をこのリポジトリ 1 つにまとめ、データベースの型を共有する
