@@ -1,5 +1,5 @@
 #!/bin/sh
-# commit 前に Linter と型チェックを走らせ、失敗したら commit を止める。
+# commit 前に Linter・型チェック・テストを走らせ、失敗したら commit を止める。
 set -e
 
 if [ ! -x node_modules/.bin/biome ]; then
@@ -16,4 +16,16 @@ if [ -f tsconfig.json ] && [ -x node_modules/.bin/tsc ]; then
 	node_modules/.bin/tsc --noEmit
 else
 	echo "pre-commit: tsconfig.json または TypeScript がないため、型チェックを省略します。"
+fi
+
+# テストは Vitest があるときだけ行う。DB のテストは、ローカルの Supabase が起動しているときだけ行う。
+if [ -x node_modules/.bin/vitest ]; then
+	echo "pre-commit: Vitest（unit）を走らせています..."
+	node_modules/.bin/vitest run --project unit --passWithNoTests
+	if node_modules/.bin/supabase status >/dev/null 2>&1; then
+		echo "pre-commit: Vitest（db）を走らせています..."
+		node_modules/.bin/vitest run --project db
+	else
+		echo "pre-commit: ローカルの Supabase が起動していないため、DB のテストを省略します（npm run db:start）。"
+	fi
 fi

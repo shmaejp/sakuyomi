@@ -4,17 +4,46 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 現状
 
-このリポジトリにはまだコードがない。あるのは事業企画書 `事業企画書_栽培ナレッジSSOT_前田晋弥.pptx`（読み取り専用）、README.md、用語集 `GLOSSARY.md`、ADR（`docs/adr/`）だけ。技術スタックは下記のとおり決定済みだが、ビルド/テストコマンドは未定。
+動く骨組み（#3）まで。ログインして自分の農場の圃場・作目が見えるところまでで、記録はまだない。仕様は GitHub Issues の #1（記録から即時応答まで）と #2（訂正）、作業はその sub-issue のチケットで進める。企画書 `事業企画書_栽培ナレッジSSOT_前田晋弥.pptx` は読み取り専用。
 
-Git リポジトリとして管理しており、GitHub の非公開リポジトリ `shmaejp/sakuyomi`（リモート名 `origin`、既定ブランチ `main`）に接続している。コードを追加したら、このファイルに実際のコマンドと構成を追記すること。
+Git リポジトリとして管理しており、GitHub の非公開リポジトリ `shmaejp/sakuyomi`（リモート名 `origin`、既定ブランチ `main`）に接続している。構成やコマンドを変えたら、このファイルも直すこと。
+
+## コマンド
+
+ローカルの Supabase は Docker が要る。初回は `npm install` → `npm run db:start` → `.env.example` を `.env.local` に写し、`npx supabase status -o env` の `API_URL`・`ANON_KEY` を入れる。
+
+- `npm run dev`：PWA を http://localhost:5173 で起動する
+- `npm run db:start`／`db:stop`：ローカルの Supabase を起動・停止する（Studio は http://127.0.0.1:54323、メールは Mailpit http://127.0.0.1:54324 に届く）
+- `npm run db:reset`：マイグレーションと `supabase/seed.sql` を入れ直す。開発用の `dev@example.com` でログインできる
+- `npm run db:types`：スキーマから `src/lib/database.types.ts` を生成する。マイグレーションを変えたら必ず実行する（手で直さない）
+- `npm test`：すべてのテスト。`npm run test:unit`（`src/**/*.test.ts(x)`）と `npm run test:db`（`tests/db`、起動中のローカル Supabase に対して走る）に分けても走らせられる
+- `npm run typecheck`／`npm run build`
+
+## 構成
+
+- `src/`：PWA（Vite + React）。`src/lib/supabase.ts` がクライアント、`src/farm.ts` のようにデータを読む関数は Supabase のクライアントを引数で受け取り、画面からもテストからも同じ関数を使う
+- `supabase/migrations/`：スキーマと RLS。`supabase/seed.sql` はローカル専用の初期データ
+- `supabase/farms/farm.example.sql`：農場を登録する SQL のひな形（登録画面ができるまではこれで登録する）
+- `tests/db/`：RLS などを、ローカルの Supabase に対してログイン中の農場メンバーとして確かめるテスト。`TestData`（`tests/db/support.ts`）がテストごとにデータとユーザーを作って片付ける
+
+識別子は英語にし、用語集の言葉とは次のように対応させる：農場 `farm`、農場メンバー `farm_member`、圃場 `field`、作目 `crop`、呼び名 `spoken_names`、廃止 `retired_at`、離脱 `left_at`。
+
+ログインは、アプリからの新規登録を止めてあり（`shouldCreateUser: false`、`enable_signup = false`）、招待した人だけがマジックリンクで入れる。iPhone のホーム画面に置いた PWA は Safari と保存場所が別なので、同じメールに載る 6 桁のコードでも入れる（`supabase/templates/magic_link.html`）。本番の Supabase でも、新規登録を止め、同じメールのテンプレートにすること。
+
+## 秘密情報
+
+- API キーなどの秘密情報は環境変数で渡し、コードに直接書かない。必要な変数名は `.env.example` に名前だけ書き、値は `.env.local` に入れる。必要性が確かめられない変数は足さない
+- `.env`・`.env.*` は git に入れない（`.gitignore`）。`.env.example` だけは入れる
+- Claude Code は `.env.example` 以外の `.env` 系ファイルを読めない。`.claude/settings.json` の `permissions.deny` と PreToolUse Hook（`.claude/hooks/protect-env.mjs`）で止めている。Hook は、鍵を表示する `supabase status` も止める（出力を `/dev/null` に捨てるときは通す）。`.env.local` の作成や値の確認は、ユーザーが自分で行う
+- 秘密情報をログ・エラーメッセージ・ターミナルに出さない。DB のテストは `supabase status` の出力を画面に出さずに鍵を読む（`tests/db/global-setup.ts`）
 
 ## コード品質の自動チェック
 
-- 書式と Linter は Biome（`biome.json`）に一本化している。Prettier・ESLint は入れない。Markdown は対象外
+- 書式と Linter は Biome（`biome.json`）に一本化している。Prettier・ESLint は入れない。Markdown と生成した型は対象外
 - 初回は `npm install`。`prepare` で `git config core.hooksPath .githooks` が設定される
 - 整形：`npm run format`／Lint：`npm run lint`
 - Claude Code がファイルを編集・作成すると、PostToolUse Hook（`.claude/settings.json`）がそのファイルを Biome で整形する
-- commit 前に `.githooks/pre-commit` が `biome check` を走らせる。`tsconfig.json` と TypeScript があれば `tsc --noEmit` も走らせる。失敗すると commit が止まる
+- commit 前に `.githooks/pre-commit` が `biome check`・`tsc --noEmit`・unit のテストを走らせる。ローカルの Supabase が起動していれば DB のテストも走らせる。失敗すると commit が止まる
 
 ## 技術スタック（決定済み・未実装）
 

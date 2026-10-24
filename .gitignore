@@ -1,1 +1,8 @@
 node_modules/
+dist/
+dev-dist/
+
+# 秘密情報を含む .env 系ファイルは git に入れない。変数名だけの .env.example は入れる。
+.env
+.env.*
+!.env.example
