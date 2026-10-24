@@ -68,3 +68,17 @@ Git リポジトリとして管理しており、GitHub の非公開リポジト
 - 将来の連携候補：WAGRI などの農業データ連携基盤
 - ツール単体では課金しない（導入講座・伴走コンサルとセットで提供する）。そのため、課金機能より記録の定着を優先する
 - 自農場プロトタイプで計測する指標：記録継続率（週あたりの記録数、合格ラインは週 5 件以上を 3 か月継続）、参照頻度、AI 利用コスト（想定は月数千円/農場）。これらを計測できるようにしておくとよい
+
+## Agent skills
+
+### Issue tracker
+
+Issue と仕様は GitHub Issues（`shmaejp/sakuyomi`）で管理し、`gh` CLI で操作する。`docs/agents/issue-tracker.md` を参照。
+
+### Triage labels
+
+既定の 5 つのラベル（`needs-triage`・`needs-info`・`ready-for-agent`・`ready-for-human`・`wontfix`）を名前を変えずに使う。`docs/agents/triage-labels.md` を参照。
+
+### Domain docs
+
+1 つの文脈だけの構成（ルートの `GLOSSARY.md` と `docs/adr/`）。`docs/agents/domain.md` を参照。
