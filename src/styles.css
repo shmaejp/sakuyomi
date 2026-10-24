@@ -5,6 +5,8 @@
 	--color-muted: #5b6658;
 	--color-accent: #3f6b3a;
 	--color-border: #d9d6cc;
+	--color-recording: #b3412f;
+	--color-on-recording: #ffffff;
 	color-scheme: light dark;
 	font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
 	font-size: 18px;
@@ -19,6 +21,8 @@
 		--color-muted: #a6b0a2;
 		--color-accent: #8fc286;
 		--color-border: #3a4237;
+		--color-recording: #e0705e;
+		--color-on-recording: #161a15;
 	}
 }
 
@@ -94,7 +98,8 @@ button:disabled {
 	opacity: 0.6;
 }
 
-.named-list {
+.named-list,
+.summary {
 	list-style: none;
 	margin: 0;
 	padding: 0;
@@ -103,17 +108,52 @@ button:disabled {
 	background: var(--color-surface);
 }
 
-.named-list li {
+.named-list li,
+.summary li {
 	padding: 12px;
 	display: flex;
 	flex-direction: column;
 }
 
-.named-list li + li {
+.summary li {
+	gap: 2px;
+}
+
+.named-list li + li,
+.summary li + li {
 	border-top: 1px solid var(--color-border);
 }
 
 .spoken-names {
+	color: var(--color-muted);
+	font-size: 0.9rem;
+}
+
+/* 録音ボタンは、畑で手袋のままでも押せるよう大きくする。 */
+.record-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.record-button {
+	min-height: 96px;
+	font-size: 1.3rem;
+	border-radius: 16px;
+}
+
+.record-button.recording {
+	background: var(--color-recording);
+	color: var(--color-on-recording);
+}
+
+.summary .kind {
+	color: var(--color-accent);
+	font-size: 0.9rem;
+	font-weight: 600;
+}
+
+.summary .links {
 	color: var(--color-muted);
 	font-size: 0.9rem;
 }

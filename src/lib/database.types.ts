@@ -43,6 +43,96 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"extraction_crops": {
+                  Row: {
+                    "crop_id": string | null,"extraction_id": string,"farm_id": string,"id": string,"spoken_as": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "crop_id"?: string | null,"extraction_id": string,"farm_id": string,"id"?: string,"spoken_as"?: string | null
+                  }
+                  Update: {
+                    "crop_id"?: string | null,"extraction_id"?: string,"farm_id"?: string,"id"?: string,"spoken_as"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "extraction_crops_crop_id_fkey"
+      columns: ["crop_id"]
+isOneToOne: false
+      referencedRelation: "crops"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "extraction_crops_extraction_id_fkey"
+      columns: ["extraction_id"]
+isOneToOne: false
+      referencedRelation: "extractions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "extraction_crops_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"extraction_fields": {
+                  Row: {
+                    "extraction_id": string,"farm_id": string,"field_id": string | null,"id": string,"spoken_as": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "extraction_id": string,"farm_id": string,"field_id"?: string | null,"id"?: string,"spoken_as"?: string | null
+                  }
+                  Update: {
+                    "extraction_id"?: string,"farm_id"?: string,"field_id"?: string | null,"id"?: string,"spoken_as"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "extraction_fields_extraction_id_fkey"
+      columns: ["extraction_id"]
+isOneToOne: false
+      referencedRelation: "extractions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "extraction_fields_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "extraction_fields_field_id_fkey"
+      columns: ["field_id"]
+isOneToOne: false
+      referencedRelation: "fields"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"extractions": {
+                  Row: {
+                    "body": string,"farm_id": string,"id": string,"kind": Database["public"]['Enums']["extraction_kind"],"position": number,"version_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "body": string,"farm_id": string,"id"?: string,"kind": Database["public"]['Enums']["extraction_kind"],"position": number,"version_id": string
+                  }
+                  Update: {
+                    "body"?: string,"farm_id"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["extraction_kind"],"position"?: number,"version_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "extractions_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "extractions_version_id_fkey"
+      columns: ["version_id"]
+isOneToOne: false
+      referencedRelation: "versions"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"farm_members": {
                   Row: {
                     "created_at": string,"display_name": string,"farm_id": string,"id": string,"left_at": string | null,"spoken_names": (string)[],"user_id": string | null
@@ -97,16 +187,70 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"records": {
+                  Row: {
+                    "audio_path": string | null,"created_at": string,"farm_id": string,"id": string,"recorded_at": string,"recorder_member_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "audio_path"?: string | null,"created_at"?: string,"farm_id": string,"id": string,"recorded_at": string,"recorder_member_id": string
+                  }
+                  Update: {
+                    "audio_path"?: string | null,"created_at"?: string,"farm_id"?: string,"id"?: string,"recorded_at"?: string,"recorder_member_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "records_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "records_recorder_member_id_fkey"
+      columns: ["recorder_member_id"]
+isOneToOne: false
+      referencedRelation: "farm_members"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"versions": {
+                  Row: {
+                    "author": Database["public"]['Enums']["version_author"],"created_at": string,"farm_id": string,"id": string,"record_id": string,"transcript": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "author": Database["public"]['Enums']["version_author"],"created_at"?: string,"farm_id": string,"id"?: string,"record_id": string,"transcript"?: string | null
+                  }
+                  Update: {
+                    "author"?: Database["public"]['Enums']["version_author"],"created_at"?: string,"farm_id"?: string,"id"?: string,"record_id"?: string,"transcript"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "versions_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "versions_record_id_fkey"
+      columns: ["record_id"]
+isOneToOne: false
+      referencedRelation: "records"
+      referencedColumns: ["id"]
+    }
+                  ]
                 }
           }
           Views: {
             [_ in never]: never
           }
           Functions: {
-            [_ in never]: never
+            "save_ai_version":
+{ Args: { "items": Json,"target_record_id": string,"transcript": string }; Returns: string
+                           }
           }
           Enums: {
-            [_ in never]: never
+            "extraction_kind": "observation"|"judgment"|"work","version_author": "ai"|"human"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -226,7 +370,7 @@ export const Constants = {
           }
         },"public": {
           Enums: {
-            
+            "extraction_kind": ["observation", "judgment", "work"],"version_author": ["ai", "human"]
           }
         }
 } as const

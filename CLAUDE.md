@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 現状
 
-動く骨組み（#3）まで。ログインして自分の農場の圃場・作目が見えるところまでで、記録はまだない。仕様は GitHub Issues の #1（記録から即時応答まで）と #2（訂正）、作業はその sub-issue のチケットで進める。企画書 `事業企画書_栽培ナレッジSSOT_前田晋弥.pptx` は読み取り専用。
+骨組み（#3）と、音声の記録から要約まで（#4）。録音して送ると、AI の版（文字起こし・取り出し・圃場/作目への結びつき）が保存され、要約が表示される。写真・取り出しの詳細（実施日・判断者・根拠・資材・品種）・同じ記録 ID の扱い・計測・圏外の送信待ちはまだない。仕様は GitHub Issues の #1（記録から即時応答まで）と #2（訂正）、作業はその sub-issue のチケットで進める。企画書 `事業企画書_栽培ナレッジSSOT_前田晋弥.pptx` は読み取り専用。
 
 Git リポジトリとして管理しており、GitHub の非公開リポジトリ `shmaejp/sakuyomi`（リモート名 `origin`、既定ブランチ `main`）に接続している。構成やコマンドを変えたら、このファイルも直すこと。
 
@@ -22,17 +22,20 @@ Git リポジトリとして管理しており、GitHub の非公開リポジト
 ## 構成
 
 - `src/`：PWA（Vite + React）。`src/lib/supabase.ts` がクライアント、`src/farm.ts` のようにデータを読む関数は Supabase のクライアントを引数で受け取り、画面からもテストからも同じ関数を使う
+- `supabase/functions/record/`：記録処理関数の入口（Deno）。処理の本体は `supabase/functions/_shared/record.ts` の `handleRecordRequest` で、差し替えられる 2 つの部品（文字起こし・構造化、型は `_shared/parts.ts`）を外から受け取る。本物は `_shared/claude-structurer.ts`（Claude Opus 5.5、effort `low`）と `_shared/openai-transcriber.ts`（仮置き）。テストは偽物の部品を渡して `handleRecordRequest` を Node から直接呼ぶ（`tests/db/record.test.ts`）
+- `supabase/functions/` は Deno 向けなので import に `.ts` を付ける（`tsconfig.json` の `allowImportingTsExtensions`）。npm の依存は `supabase/functions/record/deno.json` にも同じ版で書く。関数をローカルで動かすには `npx supabase functions serve record`
 - `supabase/migrations/`：スキーマと RLS。`supabase/seed.sql` はローカル専用の初期データ
 - `supabase/farms/farm.example.sql`：農場を登録する SQL のひな形（登録画面ができるまではこれで登録する）
 - `tests/db/`：RLS などを、ローカルの Supabase に対してログイン中の農場メンバーとして確かめるテスト。`TestData`（`tests/db/support.ts`）がテストごとにデータとユーザーを作って片付ける
 
-識別子は英語にし、用語集の言葉とは次のように対応させる：農場 `farm`、農場メンバー `farm_member`、圃場 `field`、作目 `crop`、呼び名 `spoken_names`、廃止 `retired_at`、離脱 `left_at`。
+識別子は英語にし、用語集の言葉とは次のように対応させる：農場 `farm`、農場メンバー `farm_member`、圃場 `field`、作目 `crop`、呼び名 `spoken_names`、廃止 `retired_at`、離脱 `left_at`、記録 `record`、記録者 `recorder`、記録日時 `recorded_at`、正本（ストレージのバケット）`originals`、版 `version`、取り出し `extraction`（観察 `observation`・判断 `judgment`・作業 `work`）。結びつきが未確定のときは、話の中の言い方を `spoken_as` に残す。
 
 ログインは、アプリからの新規登録を止めてあり（`shouldCreateUser: false`、`enable_signup = false`）、招待した人だけがマジックリンクで入れる。iPhone のホーム画面に置いた PWA は Safari と保存場所が別なので、同じメールに載る 6 桁のコードでも入れる（`supabase/templates/magic_link.html`）。本番の Supabase でも、新規登録を止め、同じメールのテンプレートにすること。
 
 ## 秘密情報
 
 - API キーなどの秘密情報は環境変数で渡し、コードに直接書かない。必要な変数名は `.env.example` に名前だけ書き、値は `.env.local` に入れる。必要性が確かめられない変数は足さない
+- Edge Functions の秘密情報（`ANTHROPIC_API_KEY`・`OPENAI_API_KEY`）は `supabase/functions/.env.example` に名前だけ書き、ローカルでは同じフォルダの `.env` に入れる
 - `.env`・`.env.*` は git に入れない（`.gitignore`）。`.env.example` だけは入れる
 - Claude Code は `.env.example` 以外の `.env` 系ファイルを読めない。`.claude/settings.json` の `permissions.deny` と PreToolUse Hook（`.claude/hooks/protect-env.mjs`）で止めている。Hook は、鍵を表示する `supabase status` も止める（出力を `/dev/null` に捨てるときは通す）。`.env.local` の作成や値の確認は、ユーザーが自分で行う
 - 秘密情報をログ・エラーメッセージ・ターミナルに出さない。DB のテストは `supabase status` の出力を画面に出さずに鍵を読む（`tests/db/global-setup.ts`）

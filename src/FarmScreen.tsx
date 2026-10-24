@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { loadMyFarm, type MyFarm } from "./farm";
 import { supabase } from "./lib/supabase";
+import { RecordPanel } from "./RecordPanel";
 
 type State =
 	| { kind: "loading" }
@@ -51,6 +52,7 @@ export function FarmScreen() {
 	return (
 		<main className="screen">
 			<h1>{farm.name}</h1>
+			<RecordPanel />
 			<section>
 				<h2>圃場</h2>
 				<NamedList items={farm.fields} />

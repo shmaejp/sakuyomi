@@ -45,7 +45,9 @@ export class TestData {
 	}
 
 	/** アカウントを作り、ログインしたクライアントを返す（農場にはまだ属さない）。 */
-	async user(label: string): Promise<{ userId: string; client: Client }> {
+	async user(
+		label: string,
+	): Promise<{ userId: string; client: Client; accessToken: string }> {
 		const email = `${label}-${this.suffix}@example.com`;
 		const password = `pw-${crypto.randomUUID()}`;
 		const { data, error } = await this.admin.auth.admin.createUser({
@@ -59,7 +61,11 @@ export class TestData {
 		const client = anonClient();
 		const signIn = await client.auth.signInWithPassword({ email, password });
 		if (signIn.error) throw signIn.error;
-		return { userId: data.user.id, client };
+		return {
+			userId: data.user.id,
+			client,
+			accessToken: signIn.data.session.access_token,
+		};
 	}
 
 	async member(
@@ -70,40 +76,69 @@ export class TestData {
 			spokenNames?: string[];
 			leftAt?: string;
 		},
-	) {
-		const { error } = await this.admin.from("farm_members").insert({
-			farm_id: farmId,
-			user_id: values.userId ?? null,
-			display_name: values.displayName,
-			spoken_names: values.spokenNames ?? [],
-			left_at: values.leftAt ?? null,
-		});
+	): Promise<string> {
+		const { data, error } = await this.admin
+			.from("farm_members")
+			.insert({
+				farm_id: farmId,
+				user_id: values.userId ?? null,
+				display_name: values.displayName,
+				spoken_names: values.spokenNames ?? [],
+				left_at: values.leftAt ?? null,
+			})
+			.select("id")
+			.single();
 		if (error) throw error;
+		return data.id;
 	}
 
 	async field(
 		farmId: string,
 		values: { name: string; spokenNames?: string[]; retiredAt?: string },
-	) {
-		const { error } = await this.admin.from("fields").insert({
-			farm_id: farmId,
-			name: values.name,
-			spoken_names: values.spokenNames ?? [],
-			retired_at: values.retiredAt ?? null,
-		});
+	): Promise<string> {
+		const { data, error } = await this.admin
+			.from("fields")
+			.insert({
+				farm_id: farmId,
+				name: values.name,
+				spoken_names: values.spokenNames ?? [],
+				retired_at: values.retiredAt ?? null,
+			})
+			.select("id")
+			.single();
 		if (error) throw error;
+		return data.id;
 	}
 
-	async crop(farmId: string, values: { name: string; spokenNames?: string[] }) {
-		const { error } = await this.admin.from("crops").insert({
-			farm_id: farmId,
-			name: values.name,
-			spoken_names: values.spokenNames ?? [],
-		});
+	async crop(
+		farmId: string,
+		values: { name: string; spokenNames?: string[] },
+	): Promise<string> {
+		const { data, error } = await this.admin
+			.from("crops")
+			.insert({
+				farm_id: farmId,
+				name: values.name,
+				spoken_names: values.spokenNames ?? [],
+			})
+			.select("id")
+			.single();
 		if (error) throw error;
+		return data.id;
 	}
 
 	async cleanUp() {
+		// 記録を消すと、版・取り出し・結びつきも消える。正本はストレージから別に消す。
+		const { data: records } = await this.admin
+			.from("records")
+			.select("audio_path")
+			.in("farm_id", this.farmIds);
+		const paths = (records ?? []).flatMap((r) =>
+			r.audio_path ? [r.audio_path] : [],
+		);
+		if (paths.length > 0)
+			await this.admin.storage.from("originals").remove(paths);
+		await this.admin.from("records").delete().in("farm_id", this.farmIds);
 		for (const table of ["crops", "fields", "farm_members"] as const) {
 			await this.admin.from(table).delete().in("farm_id", this.farmIds);
 		}
