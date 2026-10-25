@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 現状
 
-骨組み（#3）、音声の記録から要約まで（#4）、計測（#5）、写真付きの記録・写真だけの記録（#6）、取り出しの詳細（#7）、同じ記録 ID の扱いと処理の失敗（#8）、位置から圃場の候補を出す（#9）。写真を 0 枚以上撮ってから録音して送る（写真だけでもよい）と、AI の版（文字起こし・取り出し・圃場/作目/品種への結びつき・実施日・判断者・根拠・資材/量/倍率）と計測（秒数・トークン数・料金）・出来事「記録」が保存され、写真と要約が表示される。文字起こし・構造化に失敗しても記録は残り、「保存したが要約はない」が返る。同じ記録 ID で送り直すと、版があればその要約を、なければ正本から作り直した要約を返す。位置情報を許可していれば記録に位置が付き、位置を登録した圃場のうち 200m 以内のものが候補として構造化に渡る（位置の精度が 200m より粗いときは渡さない。許可しなくても記録できる）。写真は端末で長い辺 2000px の JPEG に縮めて送り、それを正本にする（ADR 0001）。圏外の送信待ちはまだない。仕様は GitHub Issues の #1（記録から即時応答まで）と #2（訂正）、作業はその sub-issue のチケットで進める。企画書 `事業企画書_栽培ナレッジSSOT_前田晋弥.pptx` は読み取り専用。
+骨組み（#3）、音声の記録から要約まで（#4）、計測（#5）、写真付きの記録・写真だけの記録（#6）、取り出しの詳細（#7）、同じ記録 ID の扱いと処理の失敗（#8）、位置から圃場の候補を出す（#9）。写真を 0 枚以上撮ってから録音して送る（写真だけでもよい）と、AI の版（文字起こし・取り出し・圃場/作目/品種への結びつき・実施日・判断者・根拠・資材/量/倍率）と計測（秒数・トークン数・料金）・出来事「記録」が保存され、写真と要約が表示される。文字起こし・構造化に失敗しても記録は残り、「保存したが要約はない」が返る。同じ記録 ID で送り直すと、版があればその要約を、なければ正本から作り直した要約を返す。位置情報を許可していれば記録に位置が付き、位置を登録した圃場のうち 200m 以内のものが候補として構造化に渡る（位置の精度が 200m より粗いときは渡さない。許可しなくても記録できる）。写真は端末で長い辺 2000px の JPEG に縮めて送り、それを正本にする（ADR 0001）。記録は電波の有無にかかわらず端末の送信待ちの列（IndexedDB）に入り、アプリを開いたとき・オンラインに戻ったとき・記録した直後に古い順に送られ、送れた記録ごとに要約が出る。圏外・時間切れなら後ろの記録も止めて待ち、サーバーが受け付けなかった記録（送り直しても通らない 4xx）は列に残したまま後ろの記録を送る（#10）。仕様は GitHub Issues の #1（記録から即時応答まで）と #2（訂正）、作業はその sub-issue のチケットで進める。企画書 `事業企画書_栽培ナレッジSSOT_前田晋弥.pptx` は読み取り専用。
 
 Git リポジトリとして管理しており、GitHub の非公開リポジトリ `shmaejp/sakuyomi`（リモート名 `origin`、既定ブランチ `main`）に接続している。構成やコマンドを変えたら、このファイルも直すこと。
 
@@ -21,7 +21,7 @@ Git リポジトリとして管理しており、GitHub の非公開リポジト
 
 ## 構成
 
-- `src/`：PWA（Vite + React）。`src/lib/supabase.ts` がクライアント、`src/farm.ts` のようにデータを読む関数は Supabase のクライアントを引数で受け取り、画面からもテストからも同じ関数を使う。`src/photo.ts` は撮った写真を送る前に縮め、`src/location.ts` は記録した場所を取る
+- `src/`：PWA（Vite + React）。`src/lib/supabase.ts` がクライアント、`src/farm.ts` のようにデータを読む関数は Supabase のクライアントを引数で受け取り、画面からもテストからも同じ関数を使う。`src/photo.ts` は撮った写真を送る前に縮め、`src/location.ts` は記録した場所を取る。`src/queue.ts` が送信待ちの列で、送り先を外から受け取る（テストは fake-indexeddb と偽物の送り先、`src/queue.test.ts`）。画面からは `src/useRecordQueue.ts` で使う
 - `supabase/functions/record/`：記録処理関数の入口（Deno）。処理の本体は `supabase/functions/_shared/record.ts` の `handleRecordRequest` で、差し替えられる 2 つの部品（文字起こし・構造化、型は `_shared/parts.ts`）を外から受け取る。本物は `_shared/claude-structurer.ts`（Claude Opus 5.5、effort `low`）と `_shared/openai-transcriber.ts`（仮置き）。日付は日本時間で数える（`_shared/dates.ts`）。位置の距離は `_shared/geo.ts` で計算する。テストは偽物の部品を渡して `handleRecordRequest` を Node から直接呼ぶ（`tests/db/record.test.ts`）
 - `supabase/functions/` は Deno 向けなので import に `.ts` を付ける（`tsconfig.json` の `allowImportingTsExtensions`）。npm の依存は `supabase/functions/record/deno.json` にも同じ版で書く。関数をローカルで動かすには `npx supabase functions serve record`
 - `supabase/migrations/`：スキーマと RLS。`supabase/seed.sql` はローカル専用の初期データ

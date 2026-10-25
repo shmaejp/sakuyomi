@@ -6,25 +6,29 @@ import {
 	requestLocation,
 } from "./location";
 import { shrinkPhoto } from "./photo";
-import { type NewRecord, type RecordSummary, sendRecord } from "./record";
+import type { Sender } from "./queue";
+import { type RecordSummary, sendRecord } from "./record";
+import { type SentRecord, useRecordQueue } from "./useRecordQueue";
 
 type State =
 	| { kind: "idle" }
 	| { kind: "recording" }
-	| { kind: "sending" }
-	/** summary が null なら、記録は保存したが要約はない。 */
-	| { kind: "done"; summary: RecordSummary | null; photos: Blob[] }
-	/** unsent は送れなかった記録。同じ記録 ID のまま送り直せる。 */
-	| { kind: "failed"; message: string; unsent?: NewRecord };
+	/** 記録を送信待ちの列に入れている途中（位置を待つ間も含む）。 */
+	| { kind: "saving" }
+	| { kind: "failed"; message: string };
 
 const KIND_LABELS = { observation: "観察", judgment: "判断", work: "作業" };
 
 /** 送るときに位置を待つ長さ。要約が出るまでの 10 秒の目標を圧迫しないよう短くする。 */
 const LOCATION_WAIT_MS = 2000;
 
+const sendToServer: Sender = (record) => sendRecord(supabase, record);
+
 // 写真を 0 枚以上撮ってから、ボタン 1 つで録音を始め、もう 1 度押すと終えて送り、要約を表示する。
 // 写真だけの記録も送れる。記録 ID と記録日時は、最初の写真を撮ったとき（なければ録音を始めたとき）に決める。
+// 記録は電波の有無にかかわらず送信待ちの列に入れ、列が古い順に送る。送れた記録ごとに要約を表示する。
 export function RecordPanel() {
+	const queue = useRecordQueue(sendToServer);
 	const [state, setState] = useState<State>({ kind: "idle" });
 	const [photos, setPhotos] = useState<Blob[]>([]);
 	// 縮めている途中の写真の数。縮め終わるまでは送らない（写真が記録から抜けないように）。
@@ -69,36 +73,28 @@ export function RecordPanel() {
 
 	async function sendDraft(audio: Blob | null) {
 		const { recordId, recordedAt, location } = startDraft();
-		setState({ kind: "sending" });
+		setState({ kind: "saving" });
 		// 位置が届いていなければ、少しだけ待って、間に合わなければ位置なしで送る。
 		const located = await locationWithin(location, LOCATION_WAIT_MS);
-		return deliver({ recordId, recordedAt, audio, photos, location: located });
-	}
-
-	// 新しい記録（sendDraft から）も、送れなかった記録の送り直しも、ここから送る。
-	async function deliver(record: NewRecord) {
-		setState({ kind: "sending" });
 		try {
-			const response = await sendRecord(supabase, record);
-			draft.current = null;
-			setPhotos([]);
-			setState({
-				kind: "done",
-				summary: response.status === "summarized" ? response.summary : null,
-				photos: record.photos,
+			await queue.add({
+				recordId,
+				recordedAt,
+				audio,
+				photos,
+				location: located,
 			});
 		} catch {
-			// 送れなかった記録は、同じ記録 ID のまま「もう一度送る」で送り直せる（記録処理関数で二重にならない）。
-			// 録り直すときは、写真と記録日時は残したまま、新しい記録 ID にする。
-			// 送れなかった記録が実はサーバーに届いていたとき、録り直した音声が届いていた記録に紛れないようにするため。
-			if (draft.current)
-				draft.current = { ...draft.current, recordId: crypto.randomUUID() };
+			// 列に入らなければ、記録は端末にも残っていない。下書き（写真と記録 ID）は残し、もう一度送れるようにする。
 			setState({
 				kind: "failed",
-				message: "記録を送れませんでした。電波のあるところで試してください。",
-				unsent: record,
+				message: "記録を端末に保存できませんでした。もう一度送ってください。",
 			});
+			return;
 		}
+		draft.current = null;
+		setPhotos([]);
+		setState({ kind: "idle" });
 	}
 
 	async function start() {
@@ -130,8 +126,7 @@ export function RecordPanel() {
 		recorder.current = null;
 	}
 
-	const busy = state.kind === "recording" || state.kind === "sending";
-	const unsent = state.kind === "failed" ? state.unsent : undefined;
+	const busy = state.kind === "recording" || state.kind === "saving";
 	const canSend = !busy && shrinking === 0;
 
 	return (
@@ -172,8 +167,8 @@ export function RecordPanel() {
 					onClick={start}
 					disabled={!canSend}
 				>
-					{state.kind === "sending"
-						? "送っています…"
+					{state.kind === "saving"
+						? "保存しています…"
 						: shrinking > 0
 							? "写真を読み込んでいます…"
 							: "録音する"}
@@ -188,32 +183,43 @@ export function RecordPanel() {
 					写真だけ送る
 				</button>
 			)}
-			{state.kind === "failed" && (
-				<>
-					<p role="alert">{state.message}</p>
-					{unsent && (
-						<button
-							type="button"
-							className="secondary"
-							onClick={() => deliver(unsent)}
-						>
-							もう一度送る
-						</button>
-					)}
-				</>
+			{state.kind === "failed" && <p role="alert">{state.message}</p>}
+			{queue.pending > 0 && (
+				<p className="pending" role="status">
+					送信待ち {queue.pending} 件
+					{queue.sending ? "。送っています…" : "。電波が戻ったら送ります。"}
+				</p>
 			)}
-			{state.kind === "done" && (
-				<>
-					{state.photos.length > 0 && <Photos photos={state.photos} />}
-					{state.summary ? (
-						<Summary summary={state.summary} />
-					) : (
-						<p>記録は保存しました。要約は作れませんでした。</p>
-					)}
-				</>
-			)}
+			{queue.sent.map((sent) => (
+				<SentResult key={sent.record.recordId} sent={sent} />
+			))}
 		</section>
 	);
+}
+
+/** 送れた記録 1 件の即時応答。新しく送れたものから上に並ぶ。 */
+function SentResult({ sent: { record, response } }: { sent: SentRecord }) {
+	return (
+		<article className="sent-record">
+			<p className="recorded-at">{timeOf(record.recordedAt)} の記録</p>
+			{record.photos.length > 0 && <Photos photos={record.photos} />}
+			{response.status === "summarized" ? (
+				<Summary summary={response.summary} />
+			) : (
+				<p>記録は保存しました。要約は作れませんでした。</p>
+			)}
+		</article>
+	);
+}
+
+/** 記録日時を「10月24日 17:30」の形にする（端末の時刻で）。 */
+function timeOf(dateTime: string) {
+	return new Date(dateTime).toLocaleString("ja-JP", {
+		month: "numeric",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+	});
 }
 
 /** 記録の写真を、撮った順に並べて表示する。 */

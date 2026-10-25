@@ -1,3 +1,4 @@
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import type {
 	RecordResponse,
 	RecordSummary,
@@ -21,8 +22,23 @@ export type NewRecord = {
 };
 
 /**
+ * サーバーが記録を受け付けなかった（送り直しても通らない）。記録が壊れている・別の人の記録 ID と重なったなど。
+ * 圏外・時間切れ・サーバーの一時的な失敗とは分ける。
+ */
+export class RecordRejected extends Error {
+	constructor(readonly status: number) {
+		super(`記録を受け付けませんでした（${status}）`);
+	}
+}
+
+/** 送り直しても通らない応答。ログインの切れ（401）・時間切れ（408）・混雑（429）は送り直せば通りうる。 */
+function isRejection(status: number) {
+	return status >= 400 && status < 500 && ![401, 408, 429].includes(status);
+}
+
+/**
  * 記録を記録処理関数に送り、応答を受け取る。応答が返れば、要約がなくても記録は保存されている。
- * 失敗したら同じ記録 ID で送り直してよい（二重にはならない）。
+ * 失敗したら同じ記録 ID で送り直してよい（二重にはならない）。受け付けられなかったときは RecordRejected を投げる。
  */
 export async function sendRecord(
 	client: Client,
@@ -43,6 +59,10 @@ export async function sendRecord(
 		"record",
 		{ body },
 	);
+	if (error instanceof FunctionsHttpError) {
+		const status = (error.context as Response).status;
+		if (isRejection(status)) throw new RecordRejected(status);
+	}
 	if (error) throw error;
 	if (!data) throw new Error("応答が返りませんでした");
 	return data;
