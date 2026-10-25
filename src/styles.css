@@ -68,7 +68,8 @@ label {
 	gap: 4px;
 }
 
-input {
+input,
+select {
 	font: inherit;
 	padding: 12px;
 	border: 1px solid var(--color-border);
@@ -276,4 +277,18 @@ label.choice {
 .link-title {
 	color: var(--color-muted);
 	font-size: 0.9rem;
+}
+
+/* 根拠・資材の行。1 行ごとに枠の中で縦に並べる。 */
+.sub-editor,
+.sub-row {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sub-row {
+	padding: 8px;
+	border: 1px dashed var(--color-border);
+	border-radius: 8px;
 }

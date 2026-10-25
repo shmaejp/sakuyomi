@@ -122,19 +122,20 @@ function toRpcItem(item: CorrectedItem) {
 		fields: toRpcLinks(item.fields),
 		crops: toRpcLinks(item.crops),
 		varieties: toRpcLinks(item.varieties),
-		...(item.kind === "judgment" && {
-			judge_member_id: item.judgeId,
+		// 種別に合わない判断者・根拠・資材も落とさずに渡し、拒否はサーバーに任せる（黙って捨てない）。
+		...("judgeId" in item && { judge_member_id: item.judgeId }),
+		...("grounds" in item && {
 			grounds: item.grounds.map((ground) =>
 				"observation" in ground
 					? { observation: ground.observation }
 					: { body: ground.text },
 			),
 		}),
-		...(item.kind === "work" && { materials: item.materials }),
+		...("materials" in item && { materials: item.materials }),
 	};
 }
 
-/** 訂正で選べる圃場・作目・品種。呼び名つき。 */
+/** 訂正で選べる圃場・作目・品種・判断者。呼び名つき。 */
 export type CorrectionChoices = {
 	/** 廃止された圃場も含む（区画が変わる前の話に結びつけるため）。 */
 	fields: {
@@ -150,13 +151,18 @@ export type CorrectionChoices = {
 		name: string;
 		spokenNames: string[];
 	}[];
+	/**
+	 * 農場メンバー（アプリを使わないメンバーも含む）。離れたメンバーも含め、left で見分ける。
+	 * 判断者としての名前は農場に残るので、今の判断者が離れたメンバーでも表示できるようにする。
+	 */
+	members: { id: string; name: string; spokenNames: string[]; left: boolean }[];
 };
 
-/** 訂正で選べる圃場・作目・品種を、登録した順に読む。見えるのは RLS で自分の農場のものだけ。 */
+/** 訂正で選べる圃場・作目・品種・判断者を、登録した順に読む。見えるのは RLS で自分の農場のものだけ。 */
 export async function loadCorrectionChoices(
 	client: Client,
 ): Promise<CorrectionChoices> {
-	const [fields, crops, varieties] = await Promise.all([
+	const [fields, crops, varieties, members] = await Promise.all([
 		client
 			.from("fields")
 			.select("id, name, spoken_names, retired_at")
@@ -166,10 +172,15 @@ export async function loadCorrectionChoices(
 			.from("varieties")
 			.select("id, crop_id, name, spoken_names")
 			.order("created_at"),
+		client
+			.from("farm_members")
+			.select("id, display_name, spoken_names, left_at")
+			.order("created_at"),
 	]);
 	if (fields.error) throw fields.error;
 	if (crops.error) throw crops.error;
 	if (varieties.error) throw varieties.error;
+	if (members.error) throw members.error;
 	return {
 		fields: fields.data.map((f) => ({
 			id: f.id,
@@ -187,6 +198,12 @@ export async function loadCorrectionChoices(
 			cropId: v.crop_id,
 			name: v.name,
 			spokenNames: v.spoken_names,
+		})),
+		members: members.data.map((m) => ({
+			id: m.id,
+			name: m.display_name,
+			spokenNames: m.spoken_names,
+			left: m.left_at !== null,
 		})),
 	};
 }

@@ -422,4 +422,157 @@ describe("訂正", () => {
 			{ observation: 0, text: "下の葉が黄色い" },
 		]);
 	});
+
+	describe("判断者・根拠・資材/量/倍率", () => {
+		/** 観察 1 つ、判断 1 つ、作業 1 つの記録。 */
+		function threeKinds(judgeId: string) {
+			return myRecord(
+				{
+					kind: "observation",
+					body: "葉が巻いていた",
+					performedOn: "2026-10-24",
+				},
+				{
+					kind: "judgment",
+					body: "消毒することにした",
+					performedOn: "2026-10-24",
+					judgeId,
+					grounds: [{ observation: 0 }],
+				},
+				{ kind: "work", body: "消毒した", performedOn: "2026-10-24" },
+			);
+		}
+
+		/** 取り出しを、種別に合わない中身ごと差し替える（画面の型では作れない形を、サーバーが拒否するか確かめる）。 */
+		function asUntypedItem(item: Record<string, unknown>): CorrectedItem {
+			return item as unknown as CorrectedItem;
+		}
+
+		it("判断者をアプリを使わないメンバーに選び直し、根拠を足す・消す・直し、資材・量・倍率を直す・空にできる", async () => {
+			const father = await data.member(farm, { displayName: "父" });
+			const before = await threeKinds(me.memberId);
+
+			const result = await correct(
+				me.client,
+				before,
+				([observation, judgment, work]) => [
+					observation as CorrectedItem,
+					{
+						...(judgment as CorrectedItem),
+						kind: "judgment",
+						judgeId: father,
+						grounds: [{ text: "JA の指導員に言われた" }, { observation: 0 }],
+					},
+					{
+						...(work as CorrectedItem),
+						kind: "work",
+						materials: [
+							{ name: "ダコニール", amount: null, dilution: "1000倍" },
+							{ name: "展着剤", amount: "5ml", dilution: null },
+						],
+					},
+				],
+			);
+
+			expect(result.status).toBe("corrected");
+			const [, judgment, work] = result.summary.items;
+			expect(judgment?.kind === "judgment" && judgment.judge).toEqual({
+				id: father,
+				name: "父",
+			});
+			expect(judgment?.kind === "judgment" && judgment.grounds).toEqual([
+				{ observation: null, text: "JA の指導員に言われた" },
+				{ observation: 0, text: "葉が巻いていた" },
+			]);
+			expect(work?.kind === "work" && work.materials).toEqual([
+				{ name: "ダコニール", amount: null, dilution: "1000倍" },
+				{ name: "展着剤", amount: "5ml", dilution: null },
+			]);
+
+			const emptied = await correct(me.client, result.summary, (items) =>
+				items.map((item) =>
+					item.kind === "work"
+						? { ...item, materials: [] }
+						: item.kind === "judgment"
+							? { ...item, grounds: [] }
+							: item,
+				),
+			);
+			const [, noGrounds, noMaterials] = emptied.summary.items;
+			expect(noGrounds?.kind === "judgment" && noGrounds.grounds).toEqual([]);
+			expect(noMaterials?.kind === "work" && noMaterials.materials).toEqual([]);
+		});
+
+		it("他の農場のメンバーを判断者にした訂正は拒否される", async () => {
+			const otherFarm = await data.farm("別の農場");
+			const stranger = await data.member(otherFarm, {
+				displayName: "よその人",
+			});
+			const before = await threeKinds(me.memberId);
+
+			await expect(
+				correct(me.client, before, (items) =>
+					items.map((item) =>
+						item.kind === "judgment" ? { ...item, judgeId: stranger } : item,
+					),
+				),
+			).rejects.toThrow(CorrectionRejected);
+			expect(await loadSummary(me.client, before.recordId)).toEqual(before);
+		});
+
+		it("根拠が、新しい版にない観察や、観察でない取り出しを指す訂正は拒否される", async () => {
+			const before = await threeKinds(me.memberId);
+			const pointTo = (observation: number) => (items: CorrectedItem[]) =>
+				items.map((item) =>
+					item.kind === "judgment"
+						? { ...item, grounds: [{ observation }] }
+						: item,
+				);
+
+			// 観察を消したのに、根拠がその位置を指したまま。
+			await expect(
+				correct(me.client, before, (items) => pointTo(2)(items.slice(1))),
+			).rejects.toThrow(CorrectionRejected);
+			// 作業を指している。
+			await expect(correct(me.client, before, pointTo(2))).rejects.toThrow(
+				CorrectionRejected,
+			);
+			expect(await loadSummary(me.client, before.recordId)).toEqual(before);
+		});
+
+		it("観察や作業に判断者・根拠を、観察や判断に資材・量・倍率を持たせた訂正は拒否される", async () => {
+			const before = await threeKinds(me.memberId);
+			const base = {
+				text: "葉が巻いていた",
+				performedOn: "2026-10-24",
+				fields: [],
+				crops: [],
+				varieties: [],
+			};
+			const material = { name: "ダコニール", amount: null, dilution: null };
+
+			for (const wrong of [
+				{ ...base, kind: "observation", judgeId: me.memberId, grounds: [] },
+				{ ...base, kind: "observation", grounds: [{ text: "なんとなく" }] },
+				{
+					...base,
+					kind: "work",
+					grounds: [{ text: "なんとなく" }],
+					materials: [],
+				},
+				{ ...base, kind: "observation", materials: [material] },
+				{
+					...base,
+					kind: "judgment",
+					judgeId: null,
+					grounds: [],
+					materials: [material],
+				},
+			])
+				await expect(
+					correct(me.client, before, () => [asUntypedItem(wrong)]),
+				).rejects.toThrow(CorrectionRejected);
+			expect(await loadSummary(me.client, before.recordId)).toEqual(before);
+		});
+	});
 });
