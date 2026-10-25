@@ -221,14 +221,14 @@ isOneToOne: false
                   ]
                 },"record_metrics": {
                   Row: {
-                    "created_at": string,"farm_id": string,"id": string,"input_tokens": number,"output_tokens": number,"record_id": string,"structuring_seconds": number,"total_seconds": number,"transcription_cost_usd": number | null,"transcription_seconds": number,"version_id": string
+                    "created_at": string,"farm_id": string,"id": string,"input_tokens": number,"output_tokens": number,"record_id": string,"structuring_seconds": number,"total_seconds": number,"transcription_cost_usd": number | null,"transcription_seconds": number | null,"version_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"farm_id": string,"id"?: string,"input_tokens": number,"output_tokens": number,"record_id": string,"structuring_seconds": number,"total_seconds": number,"transcription_cost_usd"?: number | null,"transcription_seconds": number,"version_id": string
+                    "created_at"?: string,"farm_id": string,"id"?: string,"input_tokens": number,"output_tokens": number,"record_id": string,"structuring_seconds": number,"total_seconds": number,"transcription_cost_usd"?: number | null,"transcription_seconds"?: number | null,"version_id": string
                   }
                   Update: {
-                    "created_at"?: string,"farm_id"?: string,"id"?: string,"input_tokens"?: number,"output_tokens"?: number,"record_id"?: string,"structuring_seconds"?: number,"total_seconds"?: number,"transcription_cost_usd"?: number | null,"transcription_seconds"?: number,"version_id"?: string
+                    "created_at"?: string,"farm_id"?: string,"id"?: string,"input_tokens"?: number,"output_tokens"?: number,"record_id"?: string,"structuring_seconds"?: number,"total_seconds"?: number,"transcription_cost_usd"?: number | null,"transcription_seconds"?: number | null,"version_id"?: string
                   }
                   Relationships: [
                     {
@@ -253,14 +253,14 @@ isOneToOne: true
                   ]
                 },"records": {
                   Row: {
-                    "audio_path": string | null,"farm_id": string,"id": string,"received_at": string,"recorded_at": string,"recorder_member_id": string
+                    "audio_path": string | null,"farm_id": string,"id": string,"photo_paths": (string)[],"received_at": string,"recorded_at": string,"recorder_member_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "audio_path"?: string | null,"farm_id": string,"id": string,"received_at"?: string,"recorded_at": string,"recorder_member_id": string
+                    "audio_path"?: string | null,"farm_id": string,"id": string,"photo_paths"?: (string)[],"received_at"?: string,"recorded_at": string,"recorder_member_id": string
                   }
                   Update: {
-                    "audio_path"?: string | null,"farm_id"?: string,"id"?: string,"received_at"?: string,"recorded_at"?: string,"recorder_member_id"?: string
+                    "audio_path"?: string | null,"farm_id"?: string,"id"?: string,"photo_paths"?: (string)[],"received_at"?: string,"recorded_at"?: string,"recorder_member_id"?: string
                   }
                   Relationships: [
                     {
@@ -310,7 +310,7 @@ isOneToOne: false
           }
           Functions: {
             "save_ai_version":
-{ Args: { "items": Json,"metrics": Json,"target_record_id": string,"transcript": string }; Returns: string
+{ Args: { "items": Json,"metrics": Json,"target_record_id": string,"transcript"?: string }; Returns: string
                            }
           }
           Enums: {

@@ -131,11 +131,12 @@ export class TestData {
 		// 記録を消すと、版・取り出し・結びつきも消える。正本はストレージから別に消す。
 		const { data: records } = await this.admin
 			.from("records")
-			.select("audio_path")
+			.select("audio_path, photo_paths")
 			.in("farm_id", this.farmIds);
-		const paths = (records ?? []).flatMap((r) =>
-			r.audio_path ? [r.audio_path] : [],
-		);
+		const paths = (records ?? []).flatMap((r) => [
+			...(r.audio_path ? [r.audio_path] : []),
+			...r.photo_paths,
+		]);
 		if (paths.length > 0)
 			await this.admin.storage.from("originals").remove(paths);
 		await this.admin.from("records").delete().in("farm_id", this.farmIds);

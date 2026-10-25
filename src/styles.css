@@ -157,3 +157,19 @@ button:disabled {
 	color: var(--color-muted);
 	font-size: 0.9rem;
 }
+
+/* 記録の写真は、撮った順に横に並べ、はみ出したら横に送る。 */
+.photos {
+	display: flex;
+	gap: 8px;
+	overflow-x: auto;
+}
+
+.photos img {
+	flex: none;
+	width: 96px;
+	height: 96px;
+	object-fit: cover;
+	border-radius: 8px;
+	border: 1px solid var(--color-border);
+}

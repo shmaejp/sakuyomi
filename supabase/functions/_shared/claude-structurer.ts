@@ -2,7 +2,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
-import type { Link, Registered, Structurer } from "./parts.ts";
+import {
+	isPhotoType,
+	type Link,
+	type Registered,
+	type Structurer,
+} from "./parts.ts";
 
 const MODEL = "claude-opus-5-5";
 
@@ -27,8 +32,8 @@ const OutputSchema = z.object({
 	),
 });
 
-const SYSTEM = `あなたは、家族農場の農家が畑でスマホに話した記録を整理する係です。
-文字起こしから、観察・判断・作業を取り出し、それぞれをどの圃場・作目の話かに結びつけます。
+const SYSTEM = `あなたは、家族農場の農家が畑でスマホに話した・撮った記録を整理する係です。
+文字起こしと写真から、観察・判断・作業を取り出し、それぞれをどの圃場・作目の話かに結びつけます。
 
 - observation（観察）：作物や圃場の状態についての気づき
 - judgment（判断）：栽培について決めたこと（やらないと決めたことも含む）
@@ -37,11 +42,13 @@ const SYSTEM = `あなたは、家族農場の農家が畑でスマホに話し�
 - 圃場・作目は、登録の一覧の名前と呼び名を手がかりに結びつけ、registered に記号を入れる。一覧にない場所・作物の話なら registered は null にする。推測で別のものに結びつけない
 - 話されていないことは足さない。助言・提案・評価は書かない
 - 疑問を口にしていても記録として扱い、読み取れる観察・判断・作業を取り出す
+- 写真は、話の中の観察・判断・作業を補う手がかりとして見る
+- 文字起こしがない（写真だけの）記録では、写真に写った作物や圃場の状態を observation（観察）としてだけ取り出す。judgment・work は取り出さない
 - 聞き取れない、または取り出せるものがなければ items は空にする`;
 
 export function claudeStructurer(apiKey: string): Structurer {
 	const client = new Anthropic({ apiKey });
-	return async ({ transcript, recordedAt, fields, crops }) => {
+	return async ({ transcript, photos, recordedAt, fields, crops }) => {
 		const fieldKeys = keyed("F", fields);
 		const cropKeys = keyed("C", crops);
 		const response = await client.beta.messages.parse({
@@ -58,11 +65,20 @@ export function claudeStructurer(apiKey: string): Structurer {
 				{
 					role: "user",
 					content: [
-						`記録日時：${recordedAt}`,
-						`圃場の登録：\n${listing(fieldKeys)}`,
-						`作目の登録：\n${listing(cropKeys)}`,
-						`文字起こし：\n${transcript}`,
-					].join("\n\n"),
+						...(await Promise.all(photos.map(imageBlock))),
+						{
+							type: "text",
+							text: [
+								`記録日時：${recordedAt}`,
+								`圃場の登録：\n${listing(fieldKeys)}`,
+								`作目の登録：\n${listing(cropKeys)}`,
+								`写真：${photos.length} 枚（撮った順）`,
+								transcript === null
+									? "文字起こし：なし（写真だけの記録）"
+									: `文字起こし：\n${transcript}`,
+							].join("\n\n"),
+						},
+					],
 				},
 			],
 		});
@@ -108,4 +124,24 @@ function listing(keys: Map<string, Registered>) {
 				: `${key}：${r.name}`,
 		)
 		.join("\n");
+}
+
+/** 写真を Claude に渡す画像のブロックにする。形式はふつう記録処理関数で確かめてある。 */
+async function imageBlock(photo: Blob) {
+	const mediaType = photo.type;
+	if (!isPhotoType(mediaType))
+		throw new Error(`構造化に渡せない写真の形式です（${mediaType}）`);
+	const bytes = new Uint8Array(await photo.arrayBuffer());
+	// String.fromCharCode に一度に渡せる引数の数には上限があるので、区切って変換する。
+	let binary = "";
+	for (let i = 0; i < bytes.length; i += 0x8000)
+		binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+	return {
+		type: "image" as const,
+		source: {
+			type: "base64" as const,
+			media_type: mediaType,
+			data: btoa(binary),
+		},
+	};
 }

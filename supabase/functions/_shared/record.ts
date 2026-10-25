@@ -1,15 +1,16 @@
-// 記録処理関数（主なシーム）。録音を受け取り、同期で次の順に処理して、要約を応答として返す。
-// 1. 正本（音声）と記録を保存する 2. 文字起こしする 3. 構造化する 4. AI の版と計測を保存する 5. 要約を返す
+// 記録処理関数（主なシーム）。録音・写真を受け取り、同期で次の順に処理して、要約を応答として返す。
+// 1. 正本（音声・写真）と記録を保存する 2. 文字起こしする（写真だけなら省く） 3. 構造化する 4. AI の版と計測を保存する 5. 要約を返す
 // 記録を保存すると、出来事「記録」も DB のトリガーで残る。
 // DB には、呼び出したメンバーの権限で書き込み、RLS を効かせる。
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../../src/lib/database.types.ts";
-import type {
-	ExtractionKind,
-	Link,
-	Registered,
-	Structurer,
-	Transcriber,
+import {
+	type ExtractionKind,
+	isPhotoType,
+	type Link,
+	type Registered,
+	type Structurer,
+	type Transcriber,
 } from "./parts.ts";
 
 type Client = SupabaseClient<Database>;
@@ -27,7 +28,8 @@ type Named = { id: string | null; name: string };
 export type RecordSummary = {
 	recordId: string;
 	versionId: string;
-	transcript: string;
+	/** 写真だけの記録では null。 */
+	transcript: string | null;
 	items: {
 		kind: ExtractionKind;
 		text: string;
@@ -35,6 +37,10 @@ export type RecordSummary = {
 		crops: Named[];
 	}[];
 };
+
+// 構造化（Claude）に渡せる写真の大きさ。Claude は base64 にして 5MB までなので、元の大きさで 3.75MB まで。
+// PWA は長い辺を縮めた JPEG にしてから送るので、ふつうはこれよりずっと小さい。
+const MAX_PHOTO_BYTES = (5 * 1024 * 1024 * 3) / 4;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -63,44 +69,58 @@ export async function handleRecordRequest(
 	const farm = await loadRegistered(client, member.farmId);
 
 	// 1. 正本と記録を保存する
-	const audioPath = `${member.farmId}/${input.recordId}/audio`;
-	const upload = await client.storage
-		.from("originals")
-		.upload(audioPath, input.audio, {
-			contentType: input.audio.type || "application/octet-stream",
-			upsert: false,
-		});
-	if (upload.error) throw upload.error;
+	const folder = `${member.farmId}/${input.recordId}`;
+	const audio = input.audio && { path: `${folder}/audio`, file: input.audio };
+	const photos = input.photos.map((file, i) => ({
+		path: `${folder}/photos/${i}`,
+		file,
+	}));
+	await Promise.all(
+		[...(audio ? [audio] : []), ...photos].map(({ path, file }) =>
+			saveOriginal(client, path, file),
+		),
+	);
 	const inserted = await client.from("records").insert({
 		id: input.recordId,
 		farm_id: member.farmId,
 		recorder_member_id: member.id,
 		recorded_at: input.recordedAt,
-		audio_path: audioPath,
+		audio_path: audio?.path ?? null,
+		photo_paths: photos.map((photo) => photo.path),
 	});
 	if (inserted.error) throw inserted.error;
 
-	// 2. 文字起こしする
+	// 2. 文字起こしする（写真だけの記録では呼ばない）
 	const transcribing = performance.now();
-	const { text: transcript, costUsd } = await deps.transcribe({
-		audio: input.audio,
-		vocabulary: vocabularyOf(farm),
-	});
+	const transcription = input.audio
+		? await deps.transcribe({
+				audio: input.audio,
+				vocabulary: vocabularyOf(farm),
+			})
+		: null;
+	const transcript = transcription?.text ?? null;
 
 	// 3. 構造化する
 	const structuring = performance.now();
-	const { items, usage } = await deps.structure({
+	const extracted = await deps.structure({
 		transcript,
+		photos: input.photos,
 		recordedAt: input.recordedAt,
 		fields: farm.fields,
 		crops: farm.crops,
 	});
 	const structured = performance.now();
+	const { usage } = extracted;
+	// 写真だけの記録から取り出すのは観察だけ。構造化の部品にも頼んであるが、ここでも守る。
+	const items =
+		transcript === null
+			? extracted.items.filter((item) => item.kind === "observation")
+			: extracted.items;
 
 	// 4. AI の版を、計測と一緒に保存する
 	const saved = await client.rpc("save_ai_version", {
 		target_record_id: input.recordId,
-		transcript,
+		...(transcript === null ? {} : { transcript }),
 		items: items.map((item) => ({
 			kind: item.kind,
 			body: item.text,
@@ -108,12 +128,14 @@ export async function handleRecordRequest(
 			crops: item.crops.map(toLinkRow),
 		})),
 		metrics: {
-			transcription_seconds: seconds(transcribing, structuring),
+			transcription_seconds: transcription
+				? seconds(transcribing, structuring)
+				: null,
 			structuring_seconds: seconds(structuring, structured),
 			seconds_before_save: seconds(started, performance.now()),
 			input_tokens: usage.inputTokens,
 			output_tokens: usage.outputTokens,
-			transcription_cost_usd: costUsd,
+			transcription_cost_usd: transcription?.costUsd ?? null,
 		},
 	});
 	if (saved.error) throw saved.error;
@@ -133,7 +155,12 @@ export async function handleRecordRequest(
 	return Response.json(summary);
 }
 
-type Input = { recordId: string; recordedAt: string; audio: Blob };
+type Input = {
+	recordId: string;
+	recordedAt: string;
+	audio: Blob | null;
+	photos: Blob[];
+};
 
 async function parseInput(request: Request): Promise<Input | string> {
 	let form: FormData;
@@ -149,8 +176,30 @@ async function parseInput(request: Request): Promise<Input | string> {
 		return "recordId には UUID を入れてください";
 	if (typeof recordedAt !== "string" || Number.isNaN(Date.parse(recordedAt)))
 		return "recordedAt には日時を入れてください";
-	if (!(audio instanceof Blob) || audio.size === 0) return "音声がありません";
-	return { recordId, recordedAt: new Date(recordedAt).toISOString(), audio };
+	const photos = form
+		.getAll("photos")
+		.filter((photo): photo is File => photo instanceof Blob && photo.size > 0);
+	const hasAudio = audio instanceof Blob && audio.size > 0;
+	if (!hasAudio && photos.length === 0) return "音声も写真もありません";
+	if (photos.some((photo) => !isPhotoType(photo.type)))
+		return "写真は JPEG・PNG・WebP・GIF で送ってください";
+	if (photos.some((photo) => photo.size > MAX_PHOTO_BYTES))
+		return "写真が大きすぎます";
+	return {
+		recordId,
+		recordedAt: new Date(recordedAt).toISOString(),
+		audio: hasAudio ? audio : null,
+		photos,
+	};
+}
+
+/** 正本をストレージに置く。正本は書き換えないので、同じパスへの上書きはしない。 */
+async function saveOriginal(client: Client, path: string, file: Blob) {
+	const { error } = await client.storage.from("originals").upload(path, file, {
+		contentType: file.type || "application/octet-stream",
+		upsert: false,
+	});
+	if (error) throw error;
 }
 
 /** ログイン中の人の、離れていない農場メンバーとしての行。複数あれば最初に入った農場。 */

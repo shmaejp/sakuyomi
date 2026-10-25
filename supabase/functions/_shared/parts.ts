@@ -16,8 +16,24 @@ export type Transcriber = (input: TranscriptionInput) => Promise<{
 	costUsd: number | null;
 }>;
 
+/** 構造化（Claude）に渡せる写真の形式。記録処理関数は、これ以外の写真を受け付けない。 */
+export const PHOTO_TYPES = [
+	"image/jpeg",
+	"image/png",
+	"image/webp",
+	"image/gif",
+] as const;
+export type PhotoType = (typeof PHOTO_TYPES)[number];
+
+export function isPhotoType(type: string): type is PhotoType {
+	return (PHOTO_TYPES as readonly string[]).includes(type);
+}
+
 export type StructuringInput = {
-	transcript: string;
+	/** 写真だけの記録では null。そのときは観察だけを取り出す。 */
+	transcript: string | null;
+	/** 撮った順の写真。形式は PHOTO_TYPES のどれか。 */
+	photos: Blob[];
 	/** 端末で記録した日時（ISO 8601）。 */
 	recordedAt: string;
 	fields: Registered[];

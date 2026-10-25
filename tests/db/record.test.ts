@@ -50,7 +50,12 @@ function delay(ms: number) {
 
 function recordRequest(
 	accessToken: string | null,
-	values: { recordId?: string; recordedAt?: string; audio?: Blob | null },
+	values: {
+		recordId?: string;
+		recordedAt?: string;
+		audio?: Blob | null;
+		photos?: Blob[];
+	},
 ) {
 	const form = new FormData();
 	form.set("recordId", values.recordId ?? crypto.randomUUID());
@@ -60,6 +65,8 @@ function recordRequest(
 			? new Blob(["fake audio"], { type: "audio/webm" })
 			: values.audio;
 	if (audio) form.set("audio", audio, "audio.webm");
+	for (const photo of values.photos ?? [])
+		form.append("photos", photo, "photo.jpg");
 	return new Request("http://localhost/functions/v1/record", {
 		method: "POST",
 		headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
@@ -304,6 +311,51 @@ describe("記録処理関数", () => {
 		expect(events).toEqual([]);
 	});
 
+	it("写真を撮ってから話した記録は、写真と音声が 1 件の記録として保存され、写真が撮った順に構造化に渡される", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+		const structurer = fakeStructurer(() => ({ items: [] }));
+
+		const response = await handleRecordRequest(
+			recordRequest(me.accessToken, {
+				recordId,
+				photos: [
+					new Blob(["first photo"], { type: "image/jpeg" }),
+					new Blob(["second photo"], { type: "image/png" }),
+				],
+			}),
+			deps(fakeTranscriber("1番の葉").transcribe, structurer.structure),
+		);
+
+		expect(response.status).toBe(200);
+		expect(structurer.calls).toHaveLength(1);
+		const passed = structurer.calls[0]?.photos ?? [];
+		expect(
+			await Promise.all(passed.map(async (p) => [p.type, await p.text()])),
+		).toEqual([
+			["image/jpeg", "first photo"],
+			["image/png", "second photo"],
+		]);
+		const { data: records } = await me.client
+			.from("records")
+			.select("audio_path, photo_paths")
+			.eq("id", recordId);
+		expect(records).toHaveLength(1);
+		const originals = me.client.storage.from("originals");
+		const saved = await Promise.all(
+			(records?.[0]?.photo_paths ?? []).map(async (path) => {
+				const { data: photo } = await originals.download(path);
+				return [photo?.type, await photo?.text()];
+			}),
+		);
+		expect(saved).toEqual([
+			["image/jpeg", "first photo"],
+			["image/png", "second photo"],
+		]);
+		const audio = await originals.download(records?.[0]?.audio_path ?? "");
+		expect(await audio.data?.text()).toBe("fake audio");
+	});
+
 	it("登録にない場所・作物の話は、話の中の言い方のまま未確定として結びつく", async () => {
 		const me = await signedInMember();
 		const recordId = crypto.randomUUID();
@@ -383,6 +435,7 @@ describe("記録処理関数", () => {
 		expect(structurer.calls).toEqual([
 			{
 				transcript: "とまとの葉が黄色い",
+				photos: [],
 				recordedAt: "2026-10-24T08:30:00.000Z",
 				fields: [
 					{
@@ -552,7 +605,85 @@ describe("記録処理関数", () => {
 		expect(count).toBe(0);
 	});
 
-	it("音声のない記録は受け付けない", async () => {
+	it("写真だけの記録は、文字起こしを呼ばずに構造化し、取り出しは観察だけが残る", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+		const transcriber = fakeTranscriber("呼ばれないはず");
+		const structurer = fakeStructurer(() => ({
+			items: [
+				{
+					kind: "observation",
+					text: "トマトの葉に斑点がある",
+					fields: [],
+					crops: [{ id: tomato }],
+				},
+				{
+					kind: "judgment",
+					text: "消毒することにした",
+					fields: [],
+					crops: [{ id: tomato }],
+				},
+			],
+		}));
+
+		const response = await handleRecordRequest(
+			recordRequest(me.accessToken, {
+				recordId,
+				audio: null,
+				photos: [new Blob(["leaf"], { type: "image/jpeg" })],
+			}),
+			deps(transcriber.transcribe, structurer.structure),
+		);
+
+		expect(response.status).toBe(200);
+		expect(transcriber.calls).toEqual([]);
+		expect(structurer.calls[0]?.transcript).toBeNull();
+		const summary: RecordSummary = await response.json();
+		expect(summary).toMatchObject({
+			transcript: null,
+			items: [{ kind: "observation", text: "トマトの葉に斑点がある" }],
+		});
+		expect(summary.items).toHaveLength(1);
+		const { data: record } = await me.client
+			.from("records")
+			.select(
+				"audio_path, photo_paths, versions (transcript, extractions (kind)), record_metrics (transcription_seconds, transcription_cost_usd)",
+			)
+			.eq("id", recordId)
+			.single();
+		expect(record).toMatchObject({
+			audio_path: null,
+			photo_paths: [expect.any(String)],
+			versions: [{ transcript: null, extractions: [{ kind: "observation" }] }],
+			record_metrics: [
+				{ transcription_seconds: null, transcription_cost_usd: null },
+			],
+		});
+	});
+
+	it("構造化に渡せない形式・大きさの写真は受け付けない", async () => {
+		const me = await signedInMember();
+		const structurer = fakeStructurer(() => ({ items: [] }));
+
+		const statuses = [];
+		for (const photo of [
+			new Blob(["heic"], { type: "image/heic" }),
+			new Blob([new Uint8Array(4 * 1024 * 1024)], { type: "image/jpeg" }),
+		]) {
+			const response = await handleRecordRequest(
+				recordRequest(me.accessToken, { photos: [photo] }),
+				deps(fakeTranscriber("").transcribe, structurer.structure),
+			);
+			statuses.push(response.status);
+		}
+
+		expect(statuses).toEqual([400, 400]);
+		expect(structurer.calls).toEqual([]);
+		const { data: records } = await me.client.from("records").select("id");
+		expect(records).toEqual([]);
+	});
+
+	it("音声も写真もない記録は受け付けない", async () => {
 		const me = await signedInMember();
 
 		const response = await handleRecordRequest(
@@ -568,13 +699,14 @@ describe("記録処理関数", () => {
 		expect(records).toEqual([]);
 	});
 
-	it("農場メンバーでも、正本の音声と記録は書き換えも削除もできない", async () => {
+	it("農場メンバーでも、正本の音声・写真と記録は書き換えも削除もできない", async () => {
 		const me = await signedInMember();
 		const recordId = crypto.randomUUID();
 		await handleRecordRequest(
 			recordRequest(me.accessToken, {
 				recordId,
 				recordedAt: "2026-10-24T08:30:00.000Z",
+				photos: [new Blob(["fake photo"], { type: "image/jpeg" })],
 			}),
 			deps(
 				fakeTranscriber("").transcribe,
@@ -582,13 +714,16 @@ describe("記録処理関数", () => {
 			),
 		);
 		const audioPath = `${farm}/${recordId}/audio`;
+		const photoPath = `${farm}/${recordId}/photos/0`;
 		const originals = me.client.storage.from("originals");
 
-		await originals.upload(audioPath, new Blob(["overwritten"]), {
-			upsert: true,
-		});
-		await originals.update(audioPath, new Blob(["overwritten"]));
-		await originals.remove([audioPath]);
+		for (const path of [audioPath, photoPath]) {
+			await originals.upload(path, new Blob(["overwritten"]), {
+				upsert: true,
+			});
+			await originals.update(path, new Blob(["overwritten"]));
+			await originals.remove([path]);
+		}
 		await me.client
 			.from("records")
 			.update({ recorded_at: "2020-01-01T00:00:00.000Z" })
@@ -597,6 +732,8 @@ describe("記録処理関数", () => {
 
 		const audio = await originals.download(audioPath);
 		expect(await audio.data?.text()).toBe("fake audio");
+		const photo = await originals.download(photoPath);
+		expect(await photo.data?.text()).toBe("fake photo");
 		const { data: record } = await me.client
 			.from("records")
 			.select("recorded_at")
