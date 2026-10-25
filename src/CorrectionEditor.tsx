@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { farmDateOf } from "../supabase/functions/_shared/dates.ts";
 import type { Material } from "../supabase/functions/_shared/parts.ts";
 import {
@@ -46,11 +46,14 @@ export function CorrectionEditor({
 	const [saving, setSaving] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 
-	useEffect(() => {
-		loadCorrectionChoices(supabase).then(setChoices, () =>
-			setMessage("圃場・作目の一覧を読み込めませんでした。"),
-		);
+	// 一覧を読み込めなかったとき（圏外など）は、読み直せるようにする。
+	const [loadFailed, setLoadFailed] = useState(false);
+	const loadChoices = useCallback(() => {
+		setLoadFailed(false);
+		loadCorrectionChoices(supabase).then(setChoices, () => setLoadFailed(true));
 	}, []);
+
+	useEffect(loadChoices, [loadChoices]);
 
 	function update(index: number, item: CorrectedItem) {
 		setItems((current) => current.map((it, i) => (i === index ? item : it)));
@@ -67,6 +70,13 @@ export function CorrectionEditor({
 	}
 
 	async function save() {
+		// 圏外とわかっていれば、送らずにすぐ知らせる（送ると、トークンの更新の再試行で 30 秒ほど待たされることがある）。
+		if (!navigator.onLine) {
+			setMessage(
+				"圏外では保存できません。直した内容は残っています。電波のあるところで、もう一度保存してください。",
+			);
+			return;
+		}
 		setSaving(true);
 		setMessage(null);
 		try {
@@ -97,7 +107,26 @@ export function CorrectionEditor({
 		}
 	}
 
-	if (!choices) return <p role="status">{message ?? "読み込んでいます…"}</p>;
+	// 一覧を読み込むまでも、要約に戻れるようにする。
+	if (!choices) {
+		return (
+			<div className="correction">
+				{loadFailed ? (
+					<>
+						<p role="alert">圃場・作目の一覧を読み込めませんでした。</p>
+						<button type="button" className="secondary" onClick={loadChoices}>
+							もう一度読み込む
+						</button>
+					</>
+				) : (
+					<p role="status">読み込んでいます…</p>
+				)}
+				<button type="button" className="secondary" onClick={onCancel}>
+					やめる
+				</button>
+			</div>
+		);
+	}
 	return (
 		<div className="correction">
 			{items.map((item, i) => (
