@@ -11,7 +11,9 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../../src/lib/database.types.ts";
 import { farmDateOf } from "./dates.ts";
+import { distanceMeters, type Location, type MeasuredLocation } from "./geo.ts";
 import {
+	type FieldCandidate,
 	type Ground,
 	isPhotoType,
 	type Link,
@@ -131,6 +133,8 @@ type Originals = { audio: Blob | null; photos: Blob[] };
 type Input = Originals & {
 	recordId: string;
 	recordedAt: string;
+	/** 記録した場所。位置情報を許可していなければ null。 */
+	location: MeasuredLocation | null;
 };
 
 async function parseInput(request: Request): Promise<Input | string> {
@@ -156,12 +160,41 @@ async function parseInput(request: Request): Promise<Input | string> {
 		return "写真は JPEG・PNG・WebP・GIF で送ってください";
 	if (photos.some((photo) => photo.size > MAX_PHOTO_BYTES))
 		return "写真が大きすぎます";
+	const location = parseLocation(form);
+	if (typeof location === "string") return location;
 	return {
 		recordId: recordId.toLowerCase(),
 		recordedAt: new Date(recordedAt).toISOString(),
 		audio: hasAudio ? audio : null,
 		photos,
+		location,
 	};
+}
+
+/** 送られた位置。緯度・経度がどちらもなければ null（位置情報を許可していない）。読めなければ誤りの文。 */
+function parseLocation(form: FormData): MeasuredLocation | null | string {
+	const latitude = numberIn(form, "latitude");
+	const longitude = numberIn(form, "longitude");
+	const accuracy = numberIn(form, "accuracy");
+	if (latitude === null && longitude === null && accuracy === null) return null;
+	if (
+		latitude === null ||
+		longitude === null ||
+		!(Math.abs(latitude) <= 90) ||
+		!(Math.abs(longitude) <= 180)
+	)
+		return "位置は緯度（latitude）と経度（longitude）を両方、数で送ってください";
+	if (accuracy !== null && !(accuracy >= 0))
+		return "位置の精度（accuracy）は 0 以上の数で送ってください";
+	return { latitude, longitude, accuracyMeters: accuracy };
+}
+
+/** フォームの数の値。なければ null、数として読めなければ NaN。 */
+function numberIn(form: FormData, name: string): number | null {
+	const value = form.get(name);
+	if (value === null || (typeof value === "string" && value.trim() === ""))
+		return null;
+	return typeof value === "string" ? Number(value) : Number.NaN;
 }
 
 type Member = { id: string; farmId: string };
@@ -174,6 +207,7 @@ type SavedRecord = {
 	recordedAt: string;
 	audioPath: string | null;
 	photoPaths: string[];
+	location: MeasuredLocation | null;
 };
 
 /** 記録を読む。見えない（別の農場の）記録や、まだない記録なら null。 */
@@ -183,7 +217,9 @@ async function findRecord(
 ): Promise<SavedRecord | null> {
 	const { data, error } = await client
 		.from("records")
-		.select("id, recorder_member_id, recorded_at, audio_path, photo_paths")
+		.select(
+			"id, recorder_member_id, recorded_at, audio_path, photo_paths, latitude, longitude, location_accuracy_meters",
+		)
 		.eq("id", recordId)
 		.maybeSingle();
 	if (error) throw error;
@@ -194,6 +230,7 @@ async function findRecord(
 			recordedAt: new Date(data.recorded_at).toISOString(),
 			audioPath: data.audio_path,
 			photoPaths: data.photo_paths,
+			location: measuredLocationOf(data),
 		}
 	);
 }
@@ -224,6 +261,7 @@ async function saveRecord(
 		recordedAt: input.recordedAt,
 		audioPath: audio?.path ?? null,
 		photoPaths: photos.map((photo) => photo.path),
+		location: input.location,
 	};
 	const inserted = await client.from("records").insert({
 		id: record.id,
@@ -232,6 +270,9 @@ async function saveRecord(
 		recorded_at: record.recordedAt,
 		audio_path: record.audioPath,
 		photo_paths: record.photoPaths,
+		latitude: record.location?.latitude ?? null,
+		longitude: record.location?.longitude ?? null,
+		location_accuracy_meters: record.location?.accuracyMeters ?? null,
 	});
 	if (inserted.error?.code === UNIQUE_VIOLATION)
 		return findRecord(client, input.recordId);
@@ -314,6 +355,9 @@ async function structureRecord(
 		crops: farm.crops,
 		varieties: farm.varieties,
 		members: farm.members,
+		nearbyFields: record.location
+			? nearbyFields(farm.fieldLocations, record.location)
+			: [],
 	});
 	const structured = performance.now();
 	const { usage } = extracted;
@@ -381,7 +425,7 @@ async function loadRegistered(client: Client, farmId: string) {
 	const [fields, crops, varieties, members, materials] = await Promise.all([
 		client
 			.from("fields")
-			.select("id, name, spoken_names")
+			.select("id, name, spoken_names, latitude, longitude")
 			.eq("farm_id", farmId)
 			.is("retired_at", null)
 			.order("created_at"),
@@ -415,6 +459,11 @@ async function loadRegistered(client: Client, farmId: string) {
 	}): Registered => ({ id: r.id, name: r.name, spokenNames: r.spoken_names });
 	return {
 		fields: fields.data.map(toRegistered),
+		/** 位置を登録した圃場。 */
+		fieldLocations: fields.data.flatMap((f) => {
+			const location = locationOf(f);
+			return location ? [{ id: f.id, location }] : [];
+		}),
 		crops: crops.data.map(toRegistered),
 		varieties: varieties.data.map(
 			(v): RegisteredVariety => ({ ...toRegistered(v), cropId: v.crop_id }),
@@ -433,6 +482,48 @@ function vocabularyOf(farm: Farm) {
 		(r) => [r.name, ...r.spokenNames],
 	);
 	return [...new Set([...words, ...farm.materialNames])];
+}
+
+// 圃場の候補にする近さ。ハウスや畑の一区画の大きさと、スマホの位置のずれを見込んだ値。n1 で見直す。
+const NEARBY_FIELD_METERS = 200;
+
+/**
+ * 記録した場所から NEARBY_FIELD_METERS 以内の圃場を、近い順に。
+ * 位置の誤差が NEARBY_FIELD_METERS より大きければ、どの圃場が近いか分からないので候補を出さない。
+ */
+function nearbyFields(
+	fields: { id: string; location: Location }[],
+	here: MeasuredLocation,
+): FieldCandidate[] {
+	if (here.accuracyMeters !== null && here.accuracyMeters > NEARBY_FIELD_METERS)
+		return [];
+	return fields
+		.map((f) => ({
+			id: f.id,
+			distanceMeters: distanceMeters(here, f.location),
+		}))
+		.filter((c) => c.distanceMeters <= NEARBY_FIELD_METERS)
+		.sort((a, b) => a.distanceMeters - b.distanceMeters);
+}
+
+function locationOf(row: {
+	latitude: number | null;
+	longitude: number | null;
+}): Location | null {
+	return row.latitude === null || row.longitude === null
+		? null
+		: { latitude: row.latitude, longitude: row.longitude };
+}
+
+function measuredLocationOf(row: {
+	latitude: number | null;
+	longitude: number | null;
+	location_accuracy_meters: number | null;
+}): MeasuredLocation | null {
+	const location = locationOf(row);
+	return (
+		location && { ...location, accuracyMeters: row.location_accuracy_meters }
+	);
 }
 
 function toLinkRow(link: Link) {

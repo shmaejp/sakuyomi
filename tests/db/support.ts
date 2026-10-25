@@ -94,7 +94,13 @@ export class TestData {
 
 	async field(
 		farmId: string,
-		values: { name: string; spokenNames?: string[]; retiredAt?: string },
+		values: {
+			name: string;
+			spokenNames?: string[];
+			retiredAt?: string;
+			latitude?: number;
+			longitude?: number;
+		},
 	): Promise<string> {
 		const { data, error } = await this.admin
 			.from("fields")
@@ -103,6 +109,8 @@ export class TestData {
 				name: values.name,
 				spoken_names: values.spokenNames ?? [],
 				retired_at: values.retiredAt ?? null,
+				latitude: values.latitude ?? null,
+				longitude: values.longitude ?? null,
 			})
 			.select("id")
 			.single();

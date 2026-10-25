@@ -3,6 +3,7 @@ import type {
 	RecordSummary,
 } from "../supabase/functions/_shared/record.ts";
 import type { Client } from "./lib/supabase";
+import type { MeasuredLocation } from "./location";
 
 export type { RecordResponse, RecordSummary };
 
@@ -15,6 +16,8 @@ export type NewRecord = {
 	audio: Blob | null;
 	/** 撮った順の写真。 */
 	photos: Blob[];
+	/** 記録した場所。位置情報を許可していない・取れなかったときは null。 */
+	location: MeasuredLocation | null;
 };
 
 /**
@@ -29,6 +32,12 @@ export async function sendRecord(
 	body.set("recordId", record.recordId);
 	body.set("recordedAt", record.recordedAt);
 	if (record.audio) body.set("audio", record.audio, "audio");
+	if (record.location) {
+		body.set("latitude", String(record.location.latitude));
+		body.set("longitude", String(record.location.longitude));
+		if (record.location.accuracyMeters !== null)
+			body.set("accuracy", String(record.location.accuracyMeters));
+	}
 	for (const photo of record.photos) body.append("photos", photo, "photo");
 	const { data, error } = await client.functions.invoke<RecordResponse>(
 		"record",

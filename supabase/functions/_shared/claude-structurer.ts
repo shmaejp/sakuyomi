@@ -90,6 +90,7 @@ const SYSTEM = `あなたは、家族農場の農家が畑でスマホに話し�
 - work（作業）：実施したこと
 - 1 つの作業や判断が複数の圃場・作目にまたがるときは、分けずに 1 つの取り出しにし、圃場・作目を複数結びつける
 - 圃場・作目・品種は、登録の一覧の名前と呼び名を手がかりに結びつけ、registered に記号を入れる。一覧にない場所・作物・品種の話なら registered は null にする。推測で別のものに結びつけない
+- 記録した場所の近くの圃場が示されていれば、どの圃場の話かの手がかりにしてよい（「ここの」のように圃場の名前を言わない話など）。話に出た圃場の名前・呼び名のほうを優先し、近いというだけで、話と合わない圃場に結びつけない
 - 実施日：「昨日消毒した」なら記録日時の前日のように、話から読み取れる日を performed_on に入れる。読み取れなければ null
 - 判断者：話した人（記録者）とは別の農場メンバーが決めたと読み取れれば、judge にそのメンバーの記号を入れる。記録者の判断なら null。農場の外の人（JA の指導員など）は判断者にせず、その助言を根拠にする
 - 根拠：判断の理由として話されたことを grounds に入れる。同じ記録で取り出した観察が理由なら observation にその観察の位置を入れ、それ以外（外の人の助言、話された理由）は observation を null にして text に書く
@@ -111,6 +112,11 @@ export function claudeStructurer(apiKey: string): Structurer {
 		const cropName = (cropId: string) =>
 			input.crops.find((c) => c.id === cropId)?.name;
 		const recorder = input.members.find((m) => m.id === input.recorderId);
+		const keyOfField = new Map([...fieldKeys].map(([key, f]) => [f.id, key]));
+		const nearby = input.nearbyFields.flatMap((c) => {
+			const key = keyOfField.get(c.id);
+			return key ? [`${key}（約 ${Math.round(c.distanceMeters)}m）`] : [];
+		});
 		const response = await client.beta.messages.parse({
 			model: MODEL,
 			max_tokens: 16000,
@@ -133,6 +139,7 @@ export function claudeStructurer(apiKey: string): Structurer {
 								`記録者：${recorder?.name ?? "（不明）"}`,
 								`農場メンバーの登録：\n${listing(memberKeys)}`,
 								`圃場の登録：\n${listing(fieldKeys)}`,
+								`記録した場所の近くの圃場（近い順）：${nearby.length > 0 ? nearby.join("、") : "（なし）"}`,
 								`作目の登録：\n${listing(cropKeys)}`,
 								`品種の登録：\n${listing(varietyKeys, (v) => {
 									const crop = cropName(v.cropId);

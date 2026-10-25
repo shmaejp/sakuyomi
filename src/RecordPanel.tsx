@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
+import {
+	locationWithin,
+	type MeasuredLocation,
+	requestLocation,
+} from "./location";
 import { shrinkPhoto } from "./photo";
 import { type NewRecord, type RecordSummary, sendRecord } from "./record";
 
@@ -14,6 +19,9 @@ type State =
 
 const KIND_LABELS = { observation: "観察", judgment: "判断", work: "作業" };
 
+/** 送るときに位置を待つ長さ。要約が出るまでの 10 秒の目標を圧迫しないよう短くする。 */
+const LOCATION_WAIT_MS = 2000;
+
 // 写真を 0 枚以上撮ってから、ボタン 1 つで録音を始め、もう 1 度押すと終えて送り、要約を表示する。
 // 写真だけの記録も送れる。記録 ID と記録日時は、最初の写真を撮ったとき（なければ録音を始めたとき）に決める。
 export function RecordPanel() {
@@ -21,14 +29,26 @@ export function RecordPanel() {
 	const [photos, setPhotos] = useState<Blob[]>([]);
 	// 縮めている途中の写真の数。縮め終わるまでは送らない（写真が記録から抜けないように）。
 	const [shrinking, setShrinking] = useState(0);
-	const draft = useRef<{ recordId: string; recordedAt: string } | null>(null);
+	const draft = useRef<{
+		recordId: string;
+		recordedAt: string;
+		location: Promise<MeasuredLocation | null>;
+	} | null>(null);
 	const recorder = useRef<MediaRecorder | null>(null);
 	const camera = useRef<HTMLInputElement>(null);
 
+	// 位置情報の許可は、アプリを開いたときに聞いておく（録音を始めた直後に、マイクの許可と重ねて聞かないため）。
+	// ここで取った位置は端末が覚えておくので、記録を始めたときの位置もすぐに返りやすくなる。
+	useEffect(() => {
+		requestLocation();
+	}, []);
+
+	// 位置は記録を始めたときに取りにいき、録音や撮影のあいだに届くのを待つ。
 	function startDraft() {
 		draft.current ??= {
 			recordId: crypto.randomUUID(),
 			recordedAt: new Date().toISOString(),
+			location: requestLocation(),
 		};
 		return draft.current;
 	}
@@ -47,11 +67,15 @@ export function RecordPanel() {
 		}
 	}
 
-	function sendDraft(audio: Blob | null) {
-		const { recordId, recordedAt } = startDraft();
-		return deliver({ recordId, recordedAt, audio, photos });
+	async function sendDraft(audio: Blob | null) {
+		const { recordId, recordedAt, location } = startDraft();
+		setState({ kind: "sending" });
+		// 位置が届いていなければ、少しだけ待って、間に合わなければ位置なしで送る。
+		const located = await locationWithin(location, LOCATION_WAIT_MS);
+		return deliver({ recordId, recordedAt, audio, photos, location: located });
 	}
 
+	// 新しい記録（sendDraft から）も、送れなかった記録の送り直しも、ここから送る。
 	async function deliver(record: NewRecord) {
 		setState({ kind: "sending" });
 		try {

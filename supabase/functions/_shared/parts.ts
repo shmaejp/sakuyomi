@@ -46,7 +46,14 @@ export type StructuringInput = {
 	varieties: RegisteredVariety[];
 	/** アプリを使わないメンバーも含む。判断者を見分ける手がかりになる。 */
 	members: Registered[];
+	/**
+	 * 記録した場所の近くにある圃場（fields の中のもの）。近い順。位置がない記録や、近くに圃場がなければ空。
+	 * あくまで候補で、どの圃場の話かは構造化が決める。
+	 */
+	nearbyFields: FieldCandidate[];
 };
+
+export type FieldCandidate = { id: string; distanceMeters: number };
 
 /** 登録された圃場・作目なら id、登録にないものなら話の中の言い方（未確定）。 */
 export type Link = { id: string } | { spokenAs: string };

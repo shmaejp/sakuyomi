@@ -323,14 +323,14 @@ isOneToOne: true
                   ]
                 },"records": {
                   Row: {
-                    "audio_path": string | null,"farm_id": string,"id": string,"photo_paths": (string)[],"received_at": string,"recorded_at": string,"recorder_member_id": string
+                    "audio_path": string | null,"farm_id": string,"id": string,"latitude": number | null,"location_accuracy_meters": number | null,"longitude": number | null,"photo_paths": (string)[],"received_at": string,"recorded_at": string,"recorder_member_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "audio_path"?: string | null,"farm_id": string,"id": string,"photo_paths"?: (string)[],"received_at"?: string,"recorded_at": string,"recorder_member_id": string
+                    "audio_path"?: string | null,"farm_id": string,"id": string,"latitude"?: number | null,"location_accuracy_meters"?: number | null,"longitude"?: number | null,"photo_paths"?: (string)[],"received_at"?: string,"recorded_at": string,"recorder_member_id": string
                   }
                   Update: {
-                    "audio_path"?: string | null,"farm_id"?: string,"id"?: string,"photo_paths"?: (string)[],"received_at"?: string,"recorded_at"?: string,"recorder_member_id"?: string
+                    "audio_path"?: string | null,"farm_id"?: string,"id"?: string,"latitude"?: number | null,"location_accuracy_meters"?: number | null,"longitude"?: number | null,"photo_paths"?: (string)[],"received_at"?: string,"recorded_at"?: string,"recorder_member_id"?: string
                   }
                   Relationships: [
                     {

@@ -73,6 +73,7 @@ function recordRequest(
 		recordedAt?: string;
 		audio?: Blob | null;
 		photos?: Blob[];
+		location?: { latitude: string; longitude: string; accuracy?: string };
 	},
 ) {
 	const form = new FormData();
@@ -83,6 +84,12 @@ function recordRequest(
 			? new Blob(["fake audio"], { type: "audio/webm" })
 			: values.audio;
 	if (audio) form.set("audio", audio, "audio.webm");
+	if (values.location) {
+		form.set("latitude", values.location.latitude);
+		form.set("longitude", values.location.longitude);
+		if (values.location.accuracy)
+			form.set("accuracy", values.location.accuracy);
+	}
 	for (const photo of values.photos ?? [])
 		form.append("photos", photo, "photo.jpg");
 	return new Request("http://localhost/functions/v1/record", {
@@ -560,6 +567,7 @@ describe("記録処理関数", () => {
 				photos: [],
 				recordedAt: "2026-10-24T08:30:00.000Z",
 				recorderId: me.memberId,
+				nearbyFields: [],
 				fields: [
 					{
 						id: house1,
@@ -1575,6 +1583,181 @@ describe("記録処理関数", () => {
 		expect(record?.versions).toEqual([
 			{ transcript: "（風の音）", extractions: [] },
 		]);
+	});
+
+	describe("位置から圃場の候補を出す", () => {
+		// 記録した場所。1番ハウスから北に約 11m・東に約 9m（合わせて約 14m）
+		const here = { latitude: "34.7001", longitude: "135.5001" };
+
+		async function fieldsWithLocation() {
+			const near = await data.field(farm, {
+				name: "近くのハウス",
+				latitude: 34.7,
+				longitude: 135.5,
+			});
+			// 約 1.1km 北
+			await data.field(farm, {
+				name: "遠くの畑",
+				latitude: 34.71,
+				longitude: 135.5,
+			});
+			// 近いが廃止された圃場
+			await data.field(farm, {
+				name: "旧ハウス",
+				latitude: 34.7001,
+				longitude: 135.5001,
+				retiredAt: new Date().toISOString(),
+			});
+			return { near };
+		}
+
+		it("位置を送ると記録に保存され、位置を登録した廃止されていない圃場のうち近いものだけが、距離つきで構造化に渡される", async () => {
+			const me = await signedInMember();
+			const { near } = await fieldsWithLocation();
+			// もう 1 つの近い圃場（約 45m）。近い順に渡る
+			const nextDoor = await data.field(farm, {
+				name: "隣のハウス",
+				latitude: 34.7005,
+				longitude: 135.5001,
+			});
+			const recordId = crypto.randomUUID();
+			const structurer = fakeStructurer(() => ({ items: [] }));
+
+			await summaryOf(
+				await handleRecordRequest(
+					recordRequest(me.accessToken, { recordId, location: here }),
+					deps(
+						fakeTranscriber("ここのトマト").transcribe,
+						structurer.structure,
+					),
+				),
+			);
+
+			const candidates = structurer.calls[0]?.nearbyFields ?? [];
+			expect(candidates.map((c) => c.id)).toEqual([near, nextDoor]);
+			expect(candidates[0]?.distanceMeters).toBeGreaterThan(10);
+			expect(candidates[0]?.distanceMeters).toBeLessThan(20);
+			expect(candidates[1]?.distanceMeters).toBeGreaterThan(35);
+			expect(candidates[1]?.distanceMeters).toBeLessThan(55);
+			const { data: record } = await me.client
+				.from("records")
+				.select("latitude, longitude")
+				.eq("id", recordId)
+				.single();
+			expect(record).toEqual({ latitude: 34.7001, longitude: 135.5001 });
+		});
+
+		it("位置がない記録や、近くに圃場がない記録では、候補を渡さない", async () => {
+			const me = await signedInMember();
+			await fieldsWithLocation();
+			const structurer = fakeStructurer(() => ({ items: [] }));
+			const parts = deps(
+				fakeTranscriber("トマト").transcribe,
+				structurer.structure,
+			);
+
+			for (const location of [
+				undefined,
+				// 約 11km 南
+				{ latitude: "34.6", longitude: "135.5" },
+			]) {
+				await summaryOf(
+					await handleRecordRequest(
+						recordRequest(me.accessToken, { location }),
+						parts,
+					),
+				);
+			}
+
+			expect(structurer.calls.map((c) => c.nearbyFields)).toEqual([[], []]);
+			const { data: records } = await me.client
+				.from("records")
+				.select("latitude, longitude")
+				.order("received_at");
+			expect(records).toEqual([
+				{ latitude: null, longitude: null },
+				{ latitude: 34.6, longitude: 135.5 },
+			]);
+		});
+
+		it("位置の精度が粗すぎるときは、近くに圃場があっても候補を渡さない。精度も記録に残る", async () => {
+			const me = await signedInMember();
+			const { near } = await fieldsWithLocation();
+			const structurer = fakeStructurer(() => ({ items: [] }));
+			const parts = deps(
+				fakeTranscriber("ここのトマト").transcribe,
+				structurer.structure,
+			);
+
+			for (const accuracy of ["30", "1500"]) {
+				await summaryOf(
+					await handleRecordRequest(
+						recordRequest(me.accessToken, {
+							location: { ...here, accuracy },
+						}),
+						parts,
+					),
+				);
+			}
+
+			expect(
+				structurer.calls.map((c) => c.nearbyFields.map((f) => f.id)),
+			).toEqual([[near], []]);
+			const { data: records } = await me.client
+				.from("records")
+				.select("location_accuracy_meters")
+				.order("received_at");
+			expect(records).toEqual([
+				{ location_accuracy_meters: 30 },
+				{ location_accuracy_meters: 1500 },
+			]);
+		});
+
+		it("同じ記録 ID で送り直すと、最初に保存した位置で候補を出す", async () => {
+			const me = await signedInMember();
+			const { near } = await fieldsWithLocation();
+			const recordId = crypto.randomUUID();
+			await handleRecordRequest(
+				recordRequest(me.accessToken, { recordId, location: here }),
+				deps(fakeTranscriber("ここのトマト").transcribe, failingStructurer),
+			);
+			const structurer = fakeStructurer(() => ({ items: [] }));
+
+			await summaryOf(
+				await handleRecordRequest(
+					recordRequest(me.accessToken, { recordId }),
+					deps(
+						fakeTranscriber("ここのトマト").transcribe,
+						structurer.structure,
+					),
+				),
+			);
+
+			expect(structurer.calls[0]?.nearbyFields.map((c) => c.id)).toEqual([
+				near,
+			]);
+		});
+
+		it("緯度・経度の片方だけや、範囲の外の位置は受け付けない", async () => {
+			const me = await signedInMember();
+			const structurer = fakeStructurer(() => ({ items: [] }));
+
+			const statuses = [];
+			for (const location of [
+				{ latitude: "34.7", longitude: "" },
+				{ latitude: "91", longitude: "135.5" },
+				{ latitude: "34.7", longitude: "東" },
+			]) {
+				const response = await handleRecordRequest(
+					recordRequest(me.accessToken, { location }),
+					deps(fakeTranscriber("").transcribe, structurer.structure),
+				);
+				statuses.push(response.status);
+			}
+
+			expect(statuses).toEqual([400, 400, 400]);
+			expect(structurer.calls).toEqual([]);
+		});
 	});
 
 	it("人の版はまだ作れない", async () => {
