@@ -77,14 +77,14 @@ isOneToOne: false
                   ]
                 },"extraction_crops": {
                   Row: {
-                    "crop_id": string | null,"extraction_id": string,"farm_id": string,"id": string,"spoken_as": string | null
+                    "crop_id": string | null,"extraction_id": string,"farm_id": string,"id": string,"position": number,"spoken_as": string | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "crop_id"?: string | null,"extraction_id": string,"farm_id": string,"id"?: string,"spoken_as"?: string | null
+                    "crop_id"?: string | null,"extraction_id": string,"farm_id": string,"id"?: string,"position": number,"spoken_as"?: string | null
                   }
                   Update: {
-                    "crop_id"?: string | null,"extraction_id"?: string,"farm_id"?: string,"id"?: string,"spoken_as"?: string | null
+                    "crop_id"?: string | null,"extraction_id"?: string,"farm_id"?: string,"id"?: string,"position"?: number,"spoken_as"?: string | null
                   }
                   Relationships: [
                     {
@@ -109,14 +109,14 @@ isOneToOne: false
                   ]
                 },"extraction_fields": {
                   Row: {
-                    "extraction_id": string,"farm_id": string,"field_id": string | null,"id": string,"spoken_as": string | null
+                    "extraction_id": string,"farm_id": string,"field_id": string | null,"id": string,"position": number,"spoken_as": string | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "extraction_id": string,"farm_id": string,"field_id"?: string | null,"id"?: string,"spoken_as"?: string | null
+                    "extraction_id": string,"farm_id": string,"field_id"?: string | null,"id"?: string,"position": number,"spoken_as"?: string | null
                   }
                   Update: {
-                    "extraction_id"?: string,"farm_id"?: string,"field_id"?: string | null,"id"?: string,"spoken_as"?: string | null
+                    "extraction_id"?: string,"farm_id"?: string,"field_id"?: string | null,"id"?: string,"position"?: number,"spoken_as"?: string | null
                   }
                   Relationships: [
                     {
@@ -141,14 +141,14 @@ isOneToOne: false
                   ]
                 },"extraction_varieties": {
                   Row: {
-                    "extraction_id": string,"farm_id": string,"id": string,"spoken_as": string | null,"variety_id": string | null
+                    "extraction_id": string,"farm_id": string,"id": string,"position": number,"spoken_as": string | null,"variety_id": string | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "extraction_id": string,"farm_id": string,"id"?: string,"spoken_as"?: string | null,"variety_id"?: string | null
+                    "extraction_id": string,"farm_id": string,"id"?: string,"position": number,"spoken_as"?: string | null,"variety_id"?: string | null
                   }
                   Update: {
-                    "extraction_id"?: string,"farm_id"?: string,"id"?: string,"spoken_as"?: string | null,"variety_id"?: string | null
+                    "extraction_id"?: string,"farm_id"?: string,"id"?: string,"position"?: number,"spoken_as"?: string | null,"variety_id"?: string | null
                   }
                   Relationships: [
                     {

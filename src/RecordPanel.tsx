@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { shrinkPhoto } from "./photo";
-import { type RecordSummary, sendRecord } from "./record";
+import { type NewRecord, type RecordSummary, sendRecord } from "./record";
 
 type State =
 	| { kind: "idle" }
 	| { kind: "recording" }
 	| { kind: "sending" }
-	| { kind: "done"; summary: RecordSummary; photos: Blob[] }
-	| { kind: "failed"; message: string };
+	/** summary が null なら、記録は保存したが要約はない。 */
+	| { kind: "done"; summary: RecordSummary | null; photos: Blob[] }
+	/** unsent は送れなかった記録。同じ記録 ID のまま送り直せる。 */
+	| { kind: "failed"; message: string; unsent?: NewRecord };
 
 const KIND_LABELS = { observation: "観察", judgment: "判断", work: "作業" };
 
@@ -45,28 +47,32 @@ export function RecordPanel() {
 		}
 	}
 
-	async function send(audio: Blob | null) {
+	function sendDraft(audio: Blob | null) {
 		const { recordId, recordedAt } = startDraft();
-		const sentPhotos = photos;
+		return deliver({ recordId, recordedAt, audio, photos });
+	}
+
+	async function deliver(record: NewRecord) {
 		setState({ kind: "sending" });
 		try {
-			const summary = await sendRecord(supabase, {
-				recordId,
-				recordedAt,
-				audio,
-				photos: sentPhotos,
-			});
+			const response = await sendRecord(supabase, record);
 			draft.current = null;
 			setPhotos([]);
-			setState({ kind: "done", summary, photos: sentPhotos });
+			setState({
+				kind: "done",
+				summary: response.status === "summarized" ? response.summary : null,
+				photos: record.photos,
+			});
 		} catch {
-			// 同じ記録 ID での送り直しは、記録処理関数がまだ受け付けない（#8）。
-			// 写真と記録日時は残したまま、次は新しい記録 ID で送る。
+			// 送れなかった記録は、同じ記録 ID のまま「もう一度送る」で送り直せる（記録処理関数で二重にならない）。
+			// 録り直すときは、写真と記録日時は残したまま、新しい記録 ID にする。
+			// 送れなかった記録が実はサーバーに届いていたとき、録り直した音声が届いていた記録に紛れないようにするため。
 			if (draft.current)
 				draft.current = { ...draft.current, recordId: crypto.randomUUID() };
 			setState({
 				kind: "failed",
 				message: "記録を送れませんでした。電波のあるところで試してください。",
+				unsent: record,
 			});
 		}
 	}
@@ -88,7 +94,7 @@ export function RecordPanel() {
 		mediaRecorder.ondataavailable = (event) => chunks.push(event.data);
 		mediaRecorder.onstop = () => {
 			for (const track of stream.getTracks()) track.stop();
-			send(new Blob(chunks, { type: mediaRecorder.mimeType }));
+			sendDraft(new Blob(chunks, { type: mediaRecorder.mimeType }));
 		};
 		recorder.current = mediaRecorder;
 		mediaRecorder.start();
@@ -101,6 +107,7 @@ export function RecordPanel() {
 	}
 
 	const busy = state.kind === "recording" || state.kind === "sending";
+	const unsent = state.kind === "failed" ? state.unsent : undefined;
 	const canSend = !busy && shrinking === 0;
 
 	return (
@@ -149,15 +156,36 @@ export function RecordPanel() {
 				</button>
 			)}
 			{photos.length > 0 && canSend && (
-				<button type="button" className="secondary" onClick={() => send(null)}>
+				<button
+					type="button"
+					className="secondary"
+					onClick={() => sendDraft(null)}
+				>
 					写真だけ送る
 				</button>
 			)}
-			{state.kind === "failed" && <p role="alert">{state.message}</p>}
+			{state.kind === "failed" && (
+				<>
+					<p role="alert">{state.message}</p>
+					{unsent && (
+						<button
+							type="button"
+							className="secondary"
+							onClick={() => deliver(unsent)}
+						>
+							もう一度送る
+						</button>
+					)}
+				</>
+			)}
 			{state.kind === "done" && (
 				<>
 					{state.photos.length > 0 && <Photos photos={state.photos} />}
-					<Summary summary={state.summary} />
+					{state.summary ? (
+						<Summary summary={state.summary} />
+					) : (
+						<p>記録は保存しました。要約は作れませんでした。</p>
+					)}
 				</>
 			)}
 		</section>

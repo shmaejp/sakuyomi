@@ -9,6 +9,7 @@ import type {
 } from "../../supabase/functions/_shared/parts.ts";
 import {
 	handleRecordRequest,
+	type RecordResponse,
 	type RecordSummary,
 } from "../../supabase/functions/_shared/record.ts";
 import { adminClient, TestData } from "./support";
@@ -42,6 +43,23 @@ function fakeStructurer(
 		};
 	};
 	return { structure, calls };
+}
+
+const failingTranscriber: Transcriber = async () => {
+	throw new Error("文字起こしに失敗");
+};
+
+const failingStructurer: Structurer = async () => {
+	throw new Error("構造化に失敗");
+};
+
+/** 要約が返ったことを確かめて、その要約を取り出す。 */
+async function summaryOf(response: Response): Promise<RecordSummary> {
+	expect(response.status).toBe(200);
+	const body: RecordResponse = await response.json();
+	if (body.status !== "summarized")
+		throw new Error(`要約が返りませんでした（${JSON.stringify(body)}）`);
+	return body.summary;
 }
 
 function delay(ms: number) {
@@ -140,7 +158,7 @@ describe("記録処理関数", () => {
 		);
 
 		expect(response.status).toBe(200);
-		const summary: RecordSummary = await response.json();
+		const summary = await summaryOf(response);
 		expect(summary).toEqual({
 			recordId,
 			versionId: expect.any(String),
@@ -266,19 +284,17 @@ describe("記録処理関数", () => {
 		const recordId = crypto.randomUUID();
 		const before = Date.now();
 
-		await expect(
-			handleRecordRequest(
-				// 圏外で 3 日前に記録し、今送ったもの
-				recordRequest(me.accessToken, {
-					recordId,
-					recordedAt: new Date(before - 3 * 86_400_000).toISOString(),
-				}),
-				deps(fakeTranscriber("1番のトマト").transcribe, async () => {
-					throw new Error("構造化に失敗");
-				}),
-			),
-		).rejects.toThrow();
+		const response = await handleRecordRequest(
+			// 圏外で 3 日前に記録し、今送ったもの
+			recordRequest(me.accessToken, {
+				recordId,
+				recordedAt: new Date(before - 3 * 86_400_000).toISOString(),
+			}),
+			deps(fakeTranscriber("1番のトマト").transcribe, failingStructurer),
+		);
 		const after = Date.now();
+
+		expect(await response.json()).toEqual({ status: "saved", recordId });
 
 		const { data: events } = await me.client
 			.from("events")
@@ -384,7 +400,7 @@ describe("記録処理関数", () => {
 			),
 		);
 
-		const summary: RecordSummary = await response.json();
+		const summary = await summaryOf(response);
 		expect(summary.items).toEqual([
 			{
 				kind: "observation",
@@ -726,15 +742,16 @@ describe("記録処理関数", () => {
 			},
 		];
 		for (const item of items) {
-			await expect(
-				handleRecordRequest(
-					recordRequest(me.accessToken, {}),
-					deps(
-						fakeTranscriber("南の畑のナス").transcribe,
-						fakeStructurer(() => ({ items: [item] })).structure,
-					),
+			const recordId = crypto.randomUUID();
+			const response = await handleRecordRequest(
+				recordRequest(me.accessToken, { recordId }),
+				deps(
+					fakeTranscriber("南の畑のナス").transcribe,
+					fakeStructurer(() => ({ items: [item] })).structure,
 				),
-			).rejects.toBeTruthy();
+			);
+			// 版を保存できないので、記録だけが残る
+			expect(await response.json()).toEqual({ status: "saved", recordId });
 		}
 		const { data: extractions } = await me.client
 			.from("extractions")
@@ -812,7 +829,7 @@ describe("記録処理関数", () => {
 		expect(response.status).toBe(200);
 		expect(transcriber.calls).toEqual([]);
 		expect(structurer.calls[0]?.transcript).toBeNull();
-		const summary: RecordSummary = await response.json();
+		const summary = await summaryOf(response);
 		expect(summary).toMatchObject({
 			transcript: null,
 			items: [{ kind: "observation", text: "トマトの葉に斑点がある" }],
@@ -962,7 +979,7 @@ describe("記録処理関数", () => {
 		);
 
 		expect(response.status).toBe(200);
-		const summary: RecordSummary = await response.json();
+		const summary = await summaryOf(response);
 		expect(summary.items).toMatchObject([
 			{ kind: "observation", text: "トマトの葉に斑点が出ていた" },
 			{
@@ -1044,7 +1061,7 @@ describe("記録処理関数", () => {
 			),
 		);
 
-		const summary: RecordSummary = await response.json();
+		const summary = await summaryOf(response);
 		expect(summary.items).toMatchObject([
 			{
 				kind: "work",
@@ -1110,7 +1127,7 @@ describe("記録処理関数", () => {
 			),
 		);
 
-		const summary: RecordSummary = await response.json();
+		const summary = await summaryOf(response);
 		expect(summary.items.map((item) => item.performedOn)).toEqual([
 			"2026-10-24",
 			"2026-10-25",
@@ -1153,7 +1170,7 @@ describe("記録処理関数", () => {
 			),
 		);
 
-		const summary: RecordSummary = await response.json();
+		const summary = await summaryOf(response);
 		expect(summary.items).toMatchObject([
 			{
 				varieties: [
@@ -1187,6 +1204,12 @@ describe("記録処理関数", () => {
 		await handleRecordRequest(
 			recordRequest(me.accessToken, { recordId }),
 			noParts,
+		);
+		// 版のない記録（AI の版が既にある記録には、save_ai_version は新しい版を作らない）
+		const unversionedRecordId = crypto.randomUUID();
+		await handleRecordRequest(
+			recordRequest(me.accessToken, { recordId: unversionedRecordId }),
+			deps(fakeTranscriber("").transcribe, failingStructurer),
 		);
 		await handleRecordRequest(
 			recordRequest(me.accessToken, { recordId: otherRecordId }),
@@ -1230,7 +1253,7 @@ describe("記録処理関数", () => {
 		];
 		for (const items of rejected) {
 			const saved = await me.client.rpc("save_ai_version", {
-				target_record_id: recordId,
+				target_record_id: unversionedRecordId,
 				items,
 				metrics: {
 					transcription_seconds: 0,
@@ -1276,6 +1299,282 @@ describe("記録処理関数", () => {
 			.select("id");
 		expect(grounds).toEqual([]);
 		expect(materials).toEqual([]);
+	});
+
+	it("文字起こしか構造化に失敗しても、正本と記録が残り「保存したが要約はない」が返る", async () => {
+		const me = await signedInMember();
+
+		for (const parts of [
+			deps(failingTranscriber, fakeStructurer(() => ({ items: [] })).structure),
+			deps(fakeTranscriber("1番のトマト").transcribe, failingStructurer),
+		]) {
+			const recordId = crypto.randomUUID();
+			const response = await handleRecordRequest(
+				recordRequest(me.accessToken, {
+					recordId,
+					photos: [new Blob(["leaf"], { type: "image/jpeg" })],
+				}),
+				parts,
+			);
+
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual({ status: "saved", recordId });
+			const { data: record } = await me.client
+				.from("records")
+				.select("audio_path, photo_paths, versions (id)")
+				.eq("id", recordId)
+				.single();
+			expect(record?.versions).toEqual([]);
+			const originals = me.client.storage.from("originals");
+			const audio = await originals.download(record?.audio_path ?? "");
+			expect(await audio.data?.text()).toBe("fake audio");
+			const photo = await originals.download(record?.photo_paths[0] ?? "");
+			expect(await photo.data?.text()).toBe("leaf");
+		}
+	});
+
+	it.each([
+		["文字起こし", () => deps(failingTranscriber, failingStructurer)],
+		[
+			"構造化",
+			() => deps(fakeTranscriber("1番のトマト").transcribe, failingStructurer),
+		],
+	])(
+		"%sに失敗した記録を同じ記録 ID で送り直すと、正本から文字起こしをやり直して要約が作られ、正本と記録は 1 つのまま",
+		async (_, failingParts) => {
+			const me = await signedInMember();
+			const recordId = crypto.randomUUID();
+			const sent = () =>
+				recordRequest(me.accessToken, {
+					recordId,
+					recordedAt: "2026-10-24T08:30:00.000Z",
+					photos: [new Blob(["leaf"], { type: "image/jpeg" })],
+				});
+			const failed = await handleRecordRequest(sent(), failingParts());
+			expect(await failed.json()).toEqual({ status: "saved", recordId });
+			const transcriber = fakeTranscriber("1番のトマトの葉に斑点");
+			const structurer = fakeStructurer(() => ({
+				items: [
+					{
+						kind: "observation",
+						text: "トマトの葉に斑点",
+						fields: [{ id: house1 }],
+						crops: [{ id: tomato }],
+					},
+				],
+			}));
+
+			const summary = await summaryOf(
+				await handleRecordRequest(
+					sent(),
+					deps(transcriber.transcribe, structurer.structure),
+				),
+			);
+
+			expect(summary).toMatchObject({
+				recordId,
+				transcript: "1番のトマトの葉に斑点",
+				items: [{ kind: "observation", text: "トマトの葉に斑点" }],
+			});
+			expect(await transcriber.calls[0]?.audio.text()).toBe("fake audio");
+			expect(
+				await Promise.all(
+					(structurer.calls[0]?.photos ?? []).map((p) => p.text()),
+				),
+			).toEqual(["leaf"]);
+			const { data: records } = await me.client
+				.from("records")
+				.select("versions (id)")
+				.eq("id", recordId);
+			expect(records).toHaveLength(1);
+			expect(records?.[0]?.versions).toHaveLength(1);
+			const { data: files } = await me.client.storage
+				.from("originals")
+				.list(`${farm}/${recordId}`);
+			expect(files?.map((f) => f.name).sort()).toEqual(["audio", "photos"]);
+			const { data: photoFiles } = await me.client.storage
+				.from("originals")
+				.list(`${farm}/${recordId}/photos`);
+			expect(photoFiles?.map((f) => f.name)).toEqual(["0"]);
+		},
+	);
+
+	it("前の呼び出しが正本の一部だけを置いて途中で止まっていても、同じ記録 ID で送り直すと記録と要約ができ、正本は置き直さない", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+		// 前の呼び出しが音声だけを置いて止まった
+		const audioPath = `${farm}/${recordId}/audio`;
+		await me.client.storage
+			.from("originals")
+			.upload(audioPath, new Blob(["fake audio"], { type: "audio/webm" }));
+
+		const summary = await summaryOf(
+			await handleRecordRequest(
+				recordRequest(me.accessToken, {
+					recordId,
+					photos: [new Blob(["leaf"], { type: "image/jpeg" })],
+				}),
+				deps(
+					fakeTranscriber("1番のトマト").transcribe,
+					fakeStructurer(() => ({ items: [] })).structure,
+				),
+			),
+		);
+
+		expect(summary.recordId).toBe(recordId);
+		const { data: record } = await me.client
+			.from("records")
+			.select("audio_path, photo_paths")
+			.eq("id", recordId)
+			.single();
+		expect(record).toEqual({
+			audio_path: audioPath,
+			photo_paths: [`${farm}/${recordId}/photos/0`],
+		});
+	});
+
+	it("別の農場や、同じ農場の別のメンバーの記録と同じ記録 ID では、記録を作らず中身も返さない", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+		await handleRecordRequest(
+			recordRequest(me.accessToken, { recordId }),
+			deps(
+				fakeTranscriber("1番のトマト").transcribe,
+				fakeStructurer(() => ({
+					items: [
+						{ kind: "observation", text: "1番のトマト", fields: [], crops: [] },
+					],
+				})).structure,
+			),
+		);
+		const sibling = await data.user("sibling");
+		await data.member(farm, { userId: sibling.userId, displayName: "弟" });
+		const neighborFarm = await data.farm("隣の農場");
+		const neighbor = await data.user("neighbor");
+		await data.member(neighborFarm, {
+			userId: neighbor.userId,
+			displayName: "隣の人",
+		});
+		const transcriber = fakeTranscriber("書き換え");
+
+		const statuses = [];
+		for (const other of [sibling, neighbor]) {
+			const response = await handleRecordRequest(
+				recordRequest(other.accessToken, { recordId }),
+				deps(
+					transcriber.transcribe,
+					fakeStructurer(() => ({ items: [] })).structure,
+				),
+			);
+			statuses.push(response.status);
+			expect(JSON.stringify(await response.json())).not.toContain(
+				"1番のトマト",
+			);
+		}
+
+		expect(statuses).toEqual([409, 409]);
+		expect(transcriber.calls).toEqual([]);
+		const { count } = await adminClient()
+			.from("records")
+			.select("*", { count: "exact", head: true })
+			.eq("id", recordId);
+		expect(count).toBe(1);
+	});
+
+	it("版のある記録を同じ記録 ID で送り直すと、処理し直さずに同じ要約が返り、版は 1 つのまま", async () => {
+		const me = await signedInMember();
+		const father = await data.member(farm, { displayName: "父" });
+		const recordId = crypto.randomUUID();
+		const sent = () => recordRequest(me.accessToken, { recordId });
+		const result = () => ({
+			items: [
+				{
+					kind: "observation" as const,
+					text: "トマトの葉に斑点が出ていた",
+					fields: [{ id: house1 }, { id: house2 }],
+					crops: [{ id: tomato }],
+				},
+				{
+					kind: "judgment" as const,
+					text: "消毒することにした",
+					fields: [{ id: house1 }],
+					crops: [{ id: tomato }, { spokenAs: "ナス" }],
+					judgeId: father,
+					grounds: [{ observation: 0 }, { text: "指導員に言われた" }],
+				},
+				{
+					kind: "work" as const,
+					text: "消毒した",
+					fields: [{ id: house1 }],
+					crops: [],
+					materials: [
+						{ name: "ダコニール", amount: "200リットル", dilution: "1000倍" },
+					],
+					performedOn: "2026-10-23",
+				},
+			],
+		});
+		const first = await summaryOf(
+			await handleRecordRequest(
+				sent(),
+				deps(
+					fakeTranscriber("1番のトマト").transcribe,
+					fakeStructurer(result).structure,
+				),
+			),
+		);
+		const transcriber = fakeTranscriber("呼ばれないはず");
+		const structurer = fakeStructurer(result);
+
+		const second = await summaryOf(
+			await handleRecordRequest(
+				sent(),
+				deps(transcriber.transcribe, structurer.structure),
+			),
+		);
+
+		expect(second).toEqual(first);
+		expect(transcriber.calls).toEqual([]);
+		expect(structurer.calls).toEqual([]);
+		const { data: versions } = await me.client
+			.from("versions")
+			.select("id")
+			.eq("record_id", recordId);
+		expect(versions).toHaveLength(1);
+		const { data: metrics } = await me.client
+			.from("record_metrics")
+			.select("id")
+			.eq("record_id", recordId);
+		expect(metrics).toHaveLength(1);
+	});
+
+	it("聞き取れず取り出しが 0 件の記録は、失敗とは区別して、取り出し 0 件の版として残る", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+
+		const summary = await summaryOf(
+			await handleRecordRequest(
+				recordRequest(me.accessToken, { recordId }),
+				deps(
+					fakeTranscriber("（風の音）").transcribe,
+					fakeStructurer(() => ({ items: [] })).structure,
+				),
+			),
+		);
+
+		expect(summary).toMatchObject({
+			recordId,
+			transcript: "（風の音）",
+			items: [],
+		});
+		const { data: record } = await me.client
+			.from("records")
+			.select("versions (transcript, extractions (id))")
+			.eq("id", recordId)
+			.single();
+		expect(record?.versions).toEqual([
+			{ transcript: "（風の音）", extractions: [] },
+		]);
 	});
 
 	it("人の版はまだ作れない", async () => {
