@@ -203,7 +203,8 @@ button:disabled {
 
 .sent-record .recorded-at,
 .related-record .recorded-at,
-.related-status {
+.related-status,
+.farm-status {
 	margin: 0;
 	color: var(--color-muted);
 	font-size: 0.9rem;

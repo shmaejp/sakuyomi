@@ -1,22 +1,16 @@
-import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import { FarmScreen } from "./FarmScreen";
 import { LoginScreen } from "./LoginScreen";
-import { supabase } from "./lib/supabase";
+import { sessionStore, supabase } from "./lib/supabase";
+import { watchSignedIn } from "./session";
 
 export function App() {
-	// undefined は「セッションを確かめている途中」。
-	const [session, setSession] = useState<Session | null | undefined>(undefined);
+	// undefined は「確かめる前」。端末に保存したセッションで決めるので、圏外でもすぐに決まる。
+	const [signedIn, setSignedIn] = useState<boolean | undefined>(undefined);
 
-	useEffect(() => {
-		supabase.auth.getSession().then(({ data }) => setSession(data.session));
-		const { data } = supabase.auth.onAuthStateChange((_event, next) =>
-			setSession(next),
-		);
-		return () => data.subscription.unsubscribe();
-	}, []);
+	useEffect(() => watchSignedIn(supabase, sessionStore, setSignedIn), []);
 
-	if (session === undefined) return <main className="screen" />;
-	if (session === null) return <LoginScreen />;
+	if (signedIn === undefined) return <main className="screen" />;
+	if (!signedIn) return <LoginScreen />;
 	return <FarmScreen />;
 }

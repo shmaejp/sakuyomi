@@ -65,9 +65,14 @@ export class TestData {
 	}
 
 	/** アカウントを作り、ログインしたクライアントを返す（農場にはまだ属さない）。 */
-	async user(
-		label: string,
-	): Promise<{ userId: string; client: Client; accessToken: string }> {
+	async user(label: string): Promise<{
+		userId: string;
+		client: Client;
+		accessToken: string;
+		/** 別のクライアントでログインし直すときに使う。 */
+		email: string;
+		password: string;
+	}> {
 		const email = `${label}-${this.suffix}@example.com`;
 		const password = `pw-${crypto.randomUUID()}`;
 		const { data, error } = await this.admin.auth.admin.createUser({
@@ -85,6 +90,8 @@ export class TestData {
 			userId: data.user.id,
 			client,
 			accessToken: signIn.data.session.access_token,
+			email,
+			password,
 		};
 	}
 
