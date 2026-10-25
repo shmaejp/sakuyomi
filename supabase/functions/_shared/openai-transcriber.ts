@@ -32,9 +32,33 @@ export function openAiTranscriber(apiKey: string): Transcriber {
 				`文字起こしに失敗しました（HTTP ${response.status}、${code}）`,
 			);
 		}
-		const body: { text: string } = await response.json();
-		return { text: body.text };
+		const body: { text: string; usage?: Usage } = await response.json();
+		return { text: body.text, costUsd: costOf(body.usage) };
 	};
+}
+
+/** gpt-4o-transcribe はトークン数で課金される。 */
+type Usage = {
+	type: string;
+	input_tokens?: number;
+	output_tokens?: number;
+	input_token_details?: { text_tokens?: number; audio_tokens?: number };
+};
+
+// 100 万トークンあたりの米ドル（gpt-4o-transcribe の料金表による）。
+const USD_PER_MILLION = { audioInput: 6, textInput: 2.5, output: 10 };
+
+function costOf(usage: Usage | undefined): number | null {
+	if (usage?.type !== "tokens") return null;
+	const audio = usage.input_token_details?.audio_tokens ?? 0;
+	const text = usage.input_token_details?.text_tokens ?? 0;
+	const output = usage.output_tokens ?? 0;
+	return (
+		(audio * USD_PER_MILLION.audioInput +
+			text * USD_PER_MILLION.textInput +
+			output * USD_PER_MILLION.output) /
+		1_000_000
+	);
 }
 
 /** 拡張子で音声の形式を見分けるので、MIME タイプに合う名前を付ける。 */

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 現状
 
-骨組み（#3）と、音声の記録から要約まで（#4）。録音して送ると、AI の版（文字起こし・取り出し・圃場/作目への結びつき）が保存され、要約が表示される。写真・取り出しの詳細（実施日・判断者・根拠・資材・品種）・同じ記録 ID の扱い・計測・圏外の送信待ちはまだない。仕様は GitHub Issues の #1（記録から即時応答まで）と #2（訂正）、作業はその sub-issue のチケットで進める。企画書 `事業企画書_栽培ナレッジSSOT_前田晋弥.pptx` は読み取り専用。
+骨組み（#3）、音声の記録から要約まで（#4）、計測（#5）。録音して送ると、AI の版（文字起こし・取り出し・圃場/作目への結びつき）と計測（秒数・トークン数・料金）・出来事「記録」が保存され、要約が表示される。写真・取り出しの詳細（実施日・判断者・根拠・資材・品種）・同じ記録 ID の扱い・圏外の送信待ちはまだない。仕様は GitHub Issues の #1（記録から即時応答まで）と #2（訂正）、作業はその sub-issue のチケットで進める。企画書 `事業企画書_栽培ナレッジSSOT_前田晋弥.pptx` は読み取り専用。
 
 Git リポジトリとして管理しており、GitHub の非公開リポジトリ `shmaejp/sakuyomi`（リモート名 `origin`、既定ブランチ `main`）に接続している。構成やコマンドを変えたら、このファイルも直すこと。
 
@@ -25,10 +25,11 @@ Git リポジトリとして管理しており、GitHub の非公開リポジト
 - `supabase/functions/record/`：記録処理関数の入口（Deno）。処理の本体は `supabase/functions/_shared/record.ts` の `handleRecordRequest` で、差し替えられる 2 つの部品（文字起こし・構造化、型は `_shared/parts.ts`）を外から受け取る。本物は `_shared/claude-structurer.ts`（Claude Opus 5.5、effort `low`）と `_shared/openai-transcriber.ts`（仮置き）。テストは偽物の部品を渡して `handleRecordRequest` を Node から直接呼ぶ（`tests/db/record.test.ts`）
 - `supabase/functions/` は Deno 向けなので import に `.ts` を付ける（`tsconfig.json` の `allowImportingTsExtensions`）。npm の依存は `supabase/functions/record/deno.json` にも同じ版で書く。関数をローカルで動かすには `npx supabase functions serve record`
 - `supabase/migrations/`：スキーマと RLS。`supabase/seed.sql` はローカル専用の初期データ
+- `docs/metrics.md`：計測（週あたりの記録数・処理秒数・AI 利用コスト）を集計する SQL の例。計測の表や Claude のモデル・単価を変えたら直す
 - `supabase/farms/farm.example.sql`：農場を登録する SQL のひな形（登録画面ができるまではこれで登録する）
 - `tests/db/`：RLS などを、ローカルの Supabase に対してログイン中の農場メンバーとして確かめるテスト。`TestData`（`tests/db/support.ts`）がテストごとにデータとユーザーを作って片付ける
 
-識別子は英語にし、用語集の言葉とは次のように対応させる：農場 `farm`、農場メンバー `farm_member`、圃場 `field`、作目 `crop`、呼び名 `spoken_names`、廃止 `retired_at`、離脱 `left_at`、記録 `record`、記録者 `recorder`、記録日時 `recorded_at`、正本（ストレージのバケット）`originals`、版 `version`、取り出し `extraction`（観察 `observation`・判断 `judgment`・作業 `work`）。結びつきが未確定のときは、話の中の言い方を `spoken_as` に残す。
+識別子は英語にし、用語集の言葉とは次のように対応させる：農場 `farm`、農場メンバー `farm_member`、圃場 `field`、作目 `crop`、呼び名 `spoken_names`、廃止 `retired_at`、離脱 `left_at`、記録 `record`、記録者 `recorder`、記録日時 `recorded_at`、正本（ストレージのバケット）`originals`、版 `version`、取り出し `extraction`（観察 `observation`・判断 `judgment`・作業 `work`）、受け取った日時 `received_at`、出来事 `event`、記録ごとの計測 `record_metrics`。結びつきが未確定のときは、話の中の言い方を `spoken_as` に残す。
 
 ログインは、アプリからの新規登録を止めてあり（`shouldCreateUser: false`、`enable_signup = false`）、招待した人だけがマジックリンクで入れる。iPhone のホーム画面に置いた PWA は Safari と保存場所が別なので、同じメールに載る 6 桁のコードでも入れる（`supabase/templates/magic_link.html`）。本番の Supabase でも、新規登録を止め、同じメールのテンプレートにすること。
 

@@ -1,5 +1,6 @@
 // 記録処理関数（主なシーム）。録音を受け取り、同期で次の順に処理して、要約を応答として返す。
-// 1. 正本（音声）と記録を保存する 2. 文字起こしする 3. 構造化する 4. AI の版を保存する 5. 要約を返す
+// 1. 正本（音声）と記録を保存する 2. 文字起こしする 3. 構造化する 4. AI の版と計測を保存する 5. 要約を返す
+// 記録を保存すると、出来事「記録」も DB のトリガーで残る。
 // DB には、呼び出したメンバーの権限で書き込み、RLS を効かせる。
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../../src/lib/database.types.ts";
@@ -41,6 +42,7 @@ export async function handleRecordRequest(
 	request: Request,
 	deps: RecordDeps,
 ): Promise<Response> {
+	const started = performance.now();
 	const authorization = request.headers.get("Authorization");
 	if (!authorization?.startsWith("Bearer "))
 		return error(401, "ログインしてください");
@@ -79,20 +81,23 @@ export async function handleRecordRequest(
 	if (inserted.error) throw inserted.error;
 
 	// 2. 文字起こしする
-	const { text: transcript } = await deps.transcribe({
+	const transcribing = performance.now();
+	const { text: transcript, costUsd } = await deps.transcribe({
 		audio: input.audio,
 		vocabulary: vocabularyOf(farm),
 	});
 
 	// 3. 構造化する
-	const { items } = await deps.structure({
+	const structuring = performance.now();
+	const { items, usage } = await deps.structure({
 		transcript,
 		recordedAt: input.recordedAt,
 		fields: farm.fields,
 		crops: farm.crops,
 	});
+	const structured = performance.now();
 
-	// 4. AI の版を保存する
+	// 4. AI の版を、計測と一緒に保存する
 	const saved = await client.rpc("save_ai_version", {
 		target_record_id: input.recordId,
 		transcript,
@@ -102,6 +107,14 @@ export async function handleRecordRequest(
 			fields: item.fields.map(toLinkRow),
 			crops: item.crops.map(toLinkRow),
 		})),
+		metrics: {
+			transcription_seconds: seconds(transcribing, structuring),
+			structuring_seconds: seconds(structuring, structured),
+			seconds_before_save: seconds(started, performance.now()),
+			input_tokens: usage.inputTokens,
+			output_tokens: usage.outputTokens,
+			transcription_cost_usd: costUsd,
+		},
 	});
 	if (saved.error) throw saved.error;
 
@@ -198,6 +211,11 @@ function named(link: Link, registered: Registered[]): Named {
 	if (!("id" in link)) return { id: null, name: link.spokenAs };
 	const found = registered.find((r) => r.id === link.id);
 	return { id: link.id, name: found?.name ?? "" };
+}
+
+/** performance.now() の 2 つの値の間の秒数。 */
+function seconds(from: number, to: number) {
+	return (to - from) / 1000;
 }
 
 function error(status: number, message: string) {

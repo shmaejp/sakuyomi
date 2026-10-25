@@ -86,6 +86,10 @@ export function claudeStructurer(apiKey: string): Structurer {
 					fields: item.fields.map(toLink(fieldKeys)),
 					crops: item.crops.map(toLink(cropKeys)),
 				})),
+			usage: {
+				inputTokens: response.usage.input_tokens,
+				outputTokens: response.usage.output_tokens,
+			},
 		};
 	};
 }

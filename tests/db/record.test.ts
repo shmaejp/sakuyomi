@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, inject, it } from "vitest";
 import type {
+	StructuredItem,
 	Structurer,
 	StructuringInput,
+	TokenUsage,
 	Transcriber,
 	TranscriptionInput,
 } from "../../supabase/functions/_shared/parts.ts";
@@ -11,26 +13,39 @@ import {
 } from "../../supabase/functions/_shared/record.ts";
 import { adminClient, TestData } from "./support";
 
-/** 決まった文章を返し、受け取った入力を残す偽物の文字起こし。 */
-function fakeTranscriber(text: string) {
+/** 決まった文章と料金を返し、受け取った入力を残す偽物の文字起こし。 */
+function fakeTranscriber(
+	text: string,
+	options: { costUsd?: number; delayMs?: number } = {},
+) {
 	const calls: TranscriptionInput[] = [];
 	const transcribe: Transcriber = async (input) => {
 		calls.push(input);
-		return { text };
+		await delay(options.delayMs ?? 0);
+		return { text, costUsd: options.costUsd ?? 0 };
 	};
 	return { transcribe, calls };
 }
 
-/** 決まった取り出しを返し、受け取った入力を残す偽物の構造化。 */
+/** 決まった取り出しとトークン数を返し、受け取った入力を残す偽物の構造化。 */
 function fakeStructurer(
-	result: (input: StructuringInput) => Awaited<ReturnType<Structurer>>,
+	result: (input: StructuringInput) => { items: StructuredItem[] },
+	options: { usage?: TokenUsage; delayMs?: number } = {},
 ) {
 	const calls: StructuringInput[] = [];
 	const structure: Structurer = async (input) => {
 		calls.push(input);
-		return result(input);
+		await delay(options.delayMs ?? 0);
+		return {
+			...result(input),
+			usage: options.usage ?? { inputTokens: 0, outputTokens: 0 },
+		};
 	};
 	return { structure, calls };
+}
+
+function delay(ms: number) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function recordRequest(
@@ -79,8 +94,11 @@ describe("記録処理関数", () => {
 
 	async function signedInMember() {
 		const me = await data.user("me");
-		await data.member(farm, { userId: me.userId, displayName: "晋弥" });
-		return me;
+		const memberId = await data.member(farm, {
+			userId: me.userId,
+			displayName: "晋弥",
+		});
+		return { ...me, memberId };
 	}
 
 	it("音声の記録を送ると要約が返り、記録・正本・AI の版・取り出し・結びつきが保存される", async () => {
@@ -176,6 +194,116 @@ describe("記録処理関数", () => {
 		expect(await audio.data?.text()).toBe("fake audio");
 	});
 
+	it("記録ごとに、Claude の入力/出力トークン数と文字起こしの料金が保存される", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+
+		await handleRecordRequest(
+			recordRequest(me.accessToken, { recordId }),
+			deps(
+				fakeTranscriber("1番のトマトに消毒した", { costUsd: 0.0123 })
+					.transcribe,
+				fakeStructurer(() => ({ items: [] }), {
+					usage: { inputTokens: 1520, outputTokens: 230 },
+				}).structure,
+			),
+		);
+
+		const { data: metrics } = await me.client
+			.from("record_metrics")
+			.select("input_tokens, output_tokens, transcription_cost_usd")
+			.eq("record_id", recordId);
+		expect(metrics).toEqual([
+			{
+				input_tokens: 1520,
+				output_tokens: 230,
+				transcription_cost_usd: 0.0123,
+			},
+		]);
+	});
+
+	it("記録ごとに、文字起こしの秒数・構造化の秒数・合計の秒数が保存される", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+
+		await handleRecordRequest(
+			recordRequest(me.accessToken, { recordId }),
+			deps(
+				fakeTranscriber("1番のトマト", { delayMs: 100 }).transcribe,
+				fakeStructurer(() => ({ items: [] }), { delayMs: 300 }).structure,
+			),
+		);
+
+		const { data: metrics } = await me.client
+			.from("record_metrics")
+			.select("transcription_seconds, structuring_seconds, total_seconds")
+			.eq("record_id", recordId)
+			.single();
+		expect(metrics?.transcription_seconds).toBeGreaterThanOrEqual(0.1);
+		expect(metrics?.transcription_seconds).toBeLessThan(0.3);
+		expect(metrics?.structuring_seconds).toBeGreaterThanOrEqual(0.3);
+		expect(metrics?.total_seconds).toBeGreaterThan(
+			(metrics?.transcription_seconds ?? 0) +
+				(metrics?.structuring_seconds ?? 0),
+		);
+	});
+
+	it("記録を受け取ると、構造化に失敗しても、出来事「記録」と受け取った日時が残る", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+		const before = Date.now();
+
+		await expect(
+			handleRecordRequest(
+				// 圏外で 3 日前に記録し、今送ったもの
+				recordRequest(me.accessToken, {
+					recordId,
+					recordedAt: new Date(before - 3 * 86_400_000).toISOString(),
+				}),
+				deps(fakeTranscriber("1番のトマト").transcribe, async () => {
+					throw new Error("構造化に失敗");
+				}),
+			),
+		).rejects.toThrow();
+		const after = Date.now();
+
+		const { data: events } = await me.client
+			.from("events")
+			.select("kind, member_id, record_id, farm_id")
+			.eq("record_id", recordId);
+		expect(events).toEqual([
+			{
+				kind: "record",
+				member_id: me.memberId,
+				record_id: recordId,
+				farm_id: farm,
+			},
+		]);
+		const { data: record } = await me.client
+			.from("records")
+			.select("received_at")
+			.eq("id", recordId)
+			.single();
+		// ローカルの DB とテストの時計のずれを 1 秒まで許す
+		const receivedAt = Date.parse(record?.received_at ?? "");
+		expect(receivedAt).toBeGreaterThanOrEqual(before - 1000);
+		expect(receivedAt).toBeLessThanOrEqual(after + 1000);
+	});
+
+	it("農場メンバーでも、出来事は書けない", async () => {
+		const me = await signedInMember();
+
+		const inserted = await me.client.from("events").insert({
+			farm_id: farm,
+			member_id: me.memberId,
+			kind: "record",
+		});
+
+		expect(inserted.error).not.toBeNull();
+		const { data: events } = await me.client.from("events").select("id");
+		expect(events).toEqual([]);
+	});
+
 	it("登録にない場所・作物の話は、話の中の言い方のまま未確定として結びつく", async () => {
 		const me = await signedInMember();
 		const recordId = crypto.randomUUID();
@@ -269,7 +397,7 @@ describe("記録処理関数", () => {
 		]);
 	});
 
-	it("別の農場のメンバーからは、その記録も版も取り出しも結びつきも正本も見えない", async () => {
+	it("別の農場のメンバーからは、その記録も版も取り出しも結びつきも正本も出来事も計測も見えない", async () => {
 		const me = await signedInMember();
 		const recordId = crypto.randomUUID();
 		await handleRecordRequest(
@@ -301,6 +429,8 @@ describe("記録処理関数", () => {
 			"extractions",
 			"extraction_fields",
 			"extraction_crops",
+			"events",
+			"record_metrics",
 		] as const) {
 			const { data: rows } = await neighbor.client.from(table).select("*");
 			expect(rows, table).toEqual([]);
@@ -338,6 +468,14 @@ describe("記録処理関数", () => {
 			target_record_id: recordId,
 			transcript: "書き換え",
 			items: [],
+			metrics: {
+				transcription_seconds: 0,
+				structuring_seconds: 0,
+				seconds_before_save: 0,
+				input_tokens: 0,
+				output_tokens: 0,
+				transcription_cost_usd: 0,
+			},
 		});
 
 		expect(direct.error).not.toBeNull();

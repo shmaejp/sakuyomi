@@ -139,7 +139,12 @@ export class TestData {
 		if (paths.length > 0)
 			await this.admin.storage.from("originals").remove(paths);
 		await this.admin.from("records").delete().in("farm_id", this.farmIds);
-		for (const table of ["crops", "fields", "farm_members"] as const) {
+		for (const table of [
+			"events",
+			"crops",
+			"fields",
+			"farm_members",
+		] as const) {
 			await this.admin.from(table).delete().in("farm_id", this.farmIds);
 		}
 		await this.admin.from("farms").delete().in("id", this.farmIds);

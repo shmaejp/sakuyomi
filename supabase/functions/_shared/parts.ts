@@ -10,9 +10,11 @@ export type TranscriptionInput = {
 };
 
 /** 音声を文字に起こす。仕組みはまだ選んでいないので、差し替えられるようにしておく。 */
-export type Transcriber = (
-	input: TranscriptionInput,
-) => Promise<{ text: string }>;
+export type Transcriber = (input: TranscriptionInput) => Promise<{
+	text: string;
+	/** この文字起こしにかかった料金（米ドル）。仕組みが料金を返さなければ null。 */
+	costUsd: number | null;
+}>;
 
 export type StructuringInput = {
 	transcript: string;
@@ -34,7 +36,9 @@ export type StructuredItem = {
 	crops: Link[];
 };
 
+export type TokenUsage = { inputTokens: number; outputTokens: number };
+
 /** 文字起こしから、観察・判断・作業と、その圃場・作目への結びつきを取り出す。 */
 export type Structurer = (
 	input: StructuringInput,
-) => Promise<{ items: StructuredItem[] }>;
+) => Promise<{ items: StructuredItem[]; usage: TokenUsage }>;
