@@ -153,6 +153,16 @@ button:disabled {
 	font-weight: 600;
 }
 
+.summary .performed-on {
+	margin-left: 8px;
+	color: var(--color-muted);
+	font-weight: 400;
+}
+
+.summary .detail {
+	font-size: 0.9rem;
+}
+
 .summary .links {
 	color: var(--color-muted);
 	font-size: 0.9rem;

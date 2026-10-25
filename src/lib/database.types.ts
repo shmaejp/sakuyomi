@@ -139,16 +139,48 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
-                },"extractions": {
+                },"extraction_varieties": {
                   Row: {
-                    "body": string,"farm_id": string,"id": string,"kind": Database["public"]['Enums']["extraction_kind"],"position": number,"version_id": string
+                    "extraction_id": string,"farm_id": string,"id": string,"spoken_as": string | null,"variety_id": string | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "body": string,"farm_id": string,"id"?: string,"kind": Database["public"]['Enums']["extraction_kind"],"position": number,"version_id": string
+                    "extraction_id": string,"farm_id": string,"id"?: string,"spoken_as"?: string | null,"variety_id"?: string | null
                   }
                   Update: {
-                    "body"?: string,"farm_id"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["extraction_kind"],"position"?: number,"version_id"?: string
+                    "extraction_id"?: string,"farm_id"?: string,"id"?: string,"spoken_as"?: string | null,"variety_id"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "extraction_varieties_extraction_id_fkey"
+      columns: ["extraction_id"]
+isOneToOne: false
+      referencedRelation: "extractions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "extraction_varieties_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "extraction_varieties_variety_id_fkey"
+      columns: ["variety_id"]
+isOneToOne: false
+      referencedRelation: "varieties"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"extractions": {
+                  Row: {
+                    "body": string,"farm_id": string,"id": string,"judge_member_id": string | null,"kind": Database["public"]['Enums']["extraction_kind"],"performed_on": string,"position": number,"version_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "body": string,"farm_id": string,"id"?: string,"judge_member_id"?: string | null,"kind": Database["public"]['Enums']["extraction_kind"],"performed_on": string,"position": number,"version_id": string
+                  }
+                  Update: {
+                    "body"?: string,"farm_id"?: string,"id"?: string,"judge_member_id"?: string | null,"kind"?: Database["public"]['Enums']["extraction_kind"],"performed_on"?: string,"position"?: number,"version_id"?: string
                   }
                   Relationships: [
                     {
@@ -156,6 +188,12 @@ isOneToOne: false
       columns: ["farm_id"]
 isOneToOne: false
       referencedRelation: "farms"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "extractions_judge_member_id_fkey"
+      columns: ["judge_member_id"]
+isOneToOne: false
+      referencedRelation: "farm_members"
       referencedColumns: ["id"]
     },{
       foreignKeyName: "extractions_version_id_fkey"
@@ -219,6 +257,38 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"grounds": {
+                  Row: {
+                    "body": string | null,"farm_id": string,"id": string,"judgment_id": string,"observation_id": string | null,"position": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "body"?: string | null,"farm_id": string,"id"?: string,"judgment_id": string,"observation_id"?: string | null,"position": number
+                  }
+                  Update: {
+                    "body"?: string | null,"farm_id"?: string,"id"?: string,"judgment_id"?: string,"observation_id"?: string | null,"position"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "grounds_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "grounds_judgment_id_fkey"
+      columns: ["judgment_id"]
+isOneToOne: false
+      referencedRelation: "extractions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "grounds_observation_id_fkey"
+      columns: ["observation_id"]
+isOneToOne: false
+      referencedRelation: "extractions"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"record_metrics": {
                   Row: {
                     "created_at": string,"farm_id": string,"id": string,"input_tokens": number,"output_tokens": number,"record_id": string,"structuring_seconds": number,"total_seconds": number,"transcription_cost_usd": number | null,"transcription_seconds": number | null,"version_id": string
@@ -277,6 +347,32 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"varieties": {
+                  Row: {
+                    "created_at": string,"crop_id": string,"farm_id": string,"id": string,"name": string,"spoken_names": (string)[]
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"crop_id": string,"farm_id": string,"id"?: string,"name": string,"spoken_names"?: (string)[]
+                  }
+                  Update: {
+                    "created_at"?: string,"crop_id"?: string,"farm_id"?: string,"id"?: string,"name"?: string,"spoken_names"?: (string)[]
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "varieties_crop_id_farm_id_fkey"
+      columns: ["crop_id","farm_id"]
+isOneToOne: false
+      referencedRelation: "crops"
+      referencedColumns: ["id","farm_id"]
+    },{
+      foreignKeyName: "varieties_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"versions": {
                   Row: {
                     "author": Database["public"]['Enums']["version_author"],"created_at": string,"farm_id": string,"id": string,"record_id": string,"transcript": string | null
@@ -300,6 +396,32 @@ isOneToOne: false
       columns: ["record_id"]
 isOneToOne: false
       referencedRelation: "records"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"work_materials": {
+                  Row: {
+                    "amount": string | null,"dilution": string | null,"farm_id": string,"id": string,"name": string,"position": number,"work_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "amount"?: string | null,"dilution"?: string | null,"farm_id": string,"id"?: string,"name": string,"position": number,"work_id": string
+                  }
+                  Update: {
+                    "amount"?: string | null,"dilution"?: string | null,"farm_id"?: string,"id"?: string,"name"?: string,"position"?: number,"work_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "work_materials_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "work_materials_work_id_fkey"
+      columns: ["work_id"]
+isOneToOne: false
+      referencedRelation: "extractions"
       referencedColumns: ["id"]
     }
                   ]

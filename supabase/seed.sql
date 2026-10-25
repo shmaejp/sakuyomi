@@ -35,3 +35,12 @@ insert into public.fields (farm_id, name, spoken_names, latitude, longitude, ret
 insert into public.crops (farm_id, name, spoken_names) values
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'トマト', array['とまと']),
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'キュウリ', array['きゅうり']);
+
+insert into public.varieties (farm_id, crop_id, name, spoken_names)
+select c.farm_id, c.id, v.name, v.spoken_names
+from public.crops c
+join (values
+  ('トマト', '桃太郎', array['ももたろう']),
+  ('トマト', 'アイコ', array[]::text[])
+) as v (crop_name, name, spoken_names) on v.crop_name = c.name
+where c.farm_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';

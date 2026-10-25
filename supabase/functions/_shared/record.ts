@@ -4,11 +4,15 @@
 // DB には、呼び出したメンバーの権限で書き込み、RLS を効かせる。
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../../src/lib/database.types.ts";
+import { farmDateOf } from "./dates.ts";
 import {
-	type ExtractionKind,
+	type Ground,
 	isPhotoType,
 	type Link,
+	type Material,
 	type Registered,
+	type RegisteredVariety,
+	type StructuredItem,
 	type Structurer,
 	type Transcriber,
 } from "./parts.ts";
@@ -22,20 +26,35 @@ export type RecordDeps = {
 	structure: Structurer;
 };
 
-/** 結びついた圃場・作目。id が null なら未確定で、name は話の中の言い方。 */
+/** 結びついた圃場・作目・品種。id が null なら未確定で、name は話の中の言い方。 */
 type Named = { id: string | null; name: string };
+
+/** 判断の根拠。observation は同じ要約の中の観察の位置で、文章だけの根拠なら null。text はどちらでも入る。 */
+type SummaryGround = { observation: number | null; text: string };
+
+export type SummaryItem = {
+	text: string;
+	/** 実施日（YYYY-MM-DD）。 */
+	performedOn: string;
+	fields: Named[];
+	crops: Named[];
+	varieties: Named[];
+} & (
+	| { kind: "observation" }
+	| {
+			kind: "judgment";
+			judge: { id: string; name: string };
+			grounds: SummaryGround[];
+	  }
+	| { kind: "work"; materials: Material[] }
+);
 
 export type RecordSummary = {
 	recordId: string;
 	versionId: string;
 	/** 写真だけの記録では null。 */
 	transcript: string | null;
-	items: {
-		kind: ExtractionKind;
-		text: string;
-		fields: Named[];
-		crops: Named[];
-	}[];
+	items: SummaryItem[];
 };
 
 // 構造化（Claude）に渡せる写真の大きさ。Claude は base64 にして 5MB までなので、元の大きさで 3.75MB まで。
@@ -106,8 +125,11 @@ export async function handleRecordRequest(
 		transcript,
 		photos: input.photos,
 		recordedAt: input.recordedAt,
+		recorderId: member.id,
 		fields: farm.fields,
 		crops: farm.crops,
+		varieties: farm.varieties,
+		members: farm.members,
 	});
 	const structured = performance.now();
 	const { usage } = extracted;
@@ -116,6 +138,11 @@ export async function handleRecordRequest(
 		transcript === null
 			? extracted.items.filter((item) => item.kind === "observation")
 			: extracted.items;
+	// 構造化の部品が省いたときの既定。実施日は記録日時の日付、判断者は記録者。
+	const defaults: Defaults = {
+		performedOn: farmDateOf(input.recordedAt),
+		judgeId: member.id,
+	};
 
 	// 4. AI の版を、計測と一緒に保存する
 	const saved = await client.rpc("save_ai_version", {
@@ -124,8 +151,15 @@ export async function handleRecordRequest(
 		items: items.map((item) => ({
 			kind: item.kind,
 			body: item.text,
+			performed_on: item.performedOn ?? defaults.performedOn,
 			fields: item.fields.map(toLinkRow),
 			crops: item.crops.map(toLinkRow),
+			varieties: (item.varieties ?? []).map(toLinkRow),
+			...(item.kind === "judgment" && {
+				judge_member_id: item.judgeId ?? defaults.judgeId,
+				grounds: (item.grounds ?? []).map(toGroundRow),
+			}),
+			...(item.kind === "work" && { materials: item.materials ?? [] }),
 		})),
 		metrics: {
 			transcription_seconds: transcription
@@ -145,12 +179,7 @@ export async function handleRecordRequest(
 		recordId: input.recordId,
 		versionId: saved.data,
 		transcript,
-		items: items.map((item) => ({
-			kind: item.kind,
-			text: item.text,
-			fields: item.fields.map((link) => named(link, farm.fields)),
-			crops: item.crops.map((link) => named(link, farm.crops)),
-		})),
+		items: items.map((item) => summaryItem(item, items, farm, defaults)),
 	};
 	return Response.json(summary);
 }
@@ -216,9 +245,12 @@ async function findMember(client: Client, userId: string) {
 	return data && { id: data.id, farmId: data.farm_id };
 }
 
-/** 構造化に渡す、農場の圃場（廃止されていないもの）と作目。 */
+/**
+ * 文字起こし・構造化に渡す、農場の圃場（廃止されていないもの）・作目・品種・農場メンバー（離れていないもの）と、
+ * 過去の作業に出た資材名。
+ */
 async function loadRegistered(client: Client, farmId: string) {
-	const [fields, crops] = await Promise.all([
+	const [fields, crops, varieties, members, materials] = await Promise.all([
 		client
 			.from("fields")
 			.select("id, name, spoken_names")
@@ -230,9 +262,24 @@ async function loadRegistered(client: Client, farmId: string) {
 			.select("id, name, spoken_names")
 			.eq("farm_id", farmId)
 			.order("created_at"),
+		client
+			.from("varieties")
+			.select("id, name, spoken_names, crop_id")
+			.eq("farm_id", farmId)
+			.order("created_at"),
+		client
+			.from("farm_members")
+			.select("id, display_name, spoken_names")
+			.eq("farm_id", farmId)
+			.is("left_at", null)
+			.order("created_at"),
+		client.from("work_materials").select("name").eq("farm_id", farmId),
 	]);
 	if (fields.error) throw fields.error;
 	if (crops.error) throw crops.error;
+	if (varieties.error) throw varieties.error;
+	if (members.error) throw members.error;
+	if (materials.error) throw materials.error;
 	const toRegistered = (r: {
 		id: string;
 		name: string;
@@ -241,19 +288,72 @@ async function loadRegistered(client: Client, farmId: string) {
 	return {
 		fields: fields.data.map(toRegistered),
 		crops: crops.data.map(toRegistered),
+		varieties: varieties.data.map(
+			(v): RegisteredVariety => ({ ...toRegistered(v), cropId: v.crop_id }),
+		),
+		members: members.data.map((m) =>
+			toRegistered({ ...m, name: m.display_name }),
+		),
+		materialNames: materials.data.map((m) => m.name),
 	};
 }
 
-function vocabularyOf(farm: { fields: Registered[]; crops: Registered[] }) {
-	const words = [...farm.fields, ...farm.crops].flatMap((r) => [
-		r.name,
-		...r.spokenNames,
-	]);
-	return [...new Set(words)];
+type Farm = Awaited<ReturnType<typeof loadRegistered>>;
+
+function vocabularyOf(farm: Farm) {
+	const words = [...farm.fields, ...farm.crops, ...farm.varieties].flatMap(
+		(r) => [r.name, ...r.spokenNames],
+	);
+	return [...new Set([...words, ...farm.materialNames])];
 }
 
 function toLinkRow(link: Link) {
 	return "id" in link ? { id: link.id } : { spoken_as: link.spokenAs };
+}
+
+function toGroundRow(ground: Ground) {
+	return "observation" in ground
+		? { observation: ground.observation }
+		: { body: ground.text };
+}
+
+type Defaults = { performedOn: string; judgeId: string };
+
+function summaryItem(
+	item: StructuredItem,
+	items: StructuredItem[],
+	farm: Farm,
+	defaults: Defaults,
+): SummaryItem {
+	const base = {
+		text: item.text,
+		performedOn: item.performedOn ?? defaults.performedOn,
+		fields: item.fields.map((link) => named(link, farm.fields)),
+		crops: item.crops.map((link) => named(link, farm.crops)),
+		varieties: (item.varieties ?? []).map((link) =>
+			named(link, farm.varieties),
+		),
+	};
+	if (item.kind === "observation") return { ...base, kind: "observation" };
+	if (item.kind === "work")
+		return { ...base, kind: "work", materials: item.materials ?? [] };
+	const judgeId = item.judgeId ?? defaults.judgeId;
+	return {
+		...base,
+		kind: "judgment",
+		judge: {
+			id: judgeId,
+			name: farm.members.find((m) => m.id === judgeId)?.name ?? "",
+		},
+		grounds: (item.grounds ?? []).map((ground) =>
+			"observation" in ground
+				? {
+						observation: ground.observation,
+						text: items[ground.observation]?.text ?? "",
+					}
+				: { observation: null, text: ground.text },
+		),
+	};
 }
 
 function named(link: Link, registered: Registered[]): Named {

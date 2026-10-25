@@ -127,6 +127,25 @@ export class TestData {
 		return data.id;
 	}
 
+	async variety(
+		farmId: string,
+		cropId: string,
+		values: { name: string; spokenNames?: string[] },
+	): Promise<string> {
+		const { data, error } = await this.admin
+			.from("varieties")
+			.insert({
+				farm_id: farmId,
+				crop_id: cropId,
+				name: values.name,
+				spoken_names: values.spokenNames ?? [],
+			})
+			.select("id")
+			.single();
+		if (error) throw error;
+		return data.id;
+	}
+
 	async cleanUp() {
 		// 記録を消すと、版・取り出し・結びつきも消える。正本はストレージから別に消す。
 		const { data: records } = await this.admin
@@ -142,6 +161,7 @@ export class TestData {
 		await this.admin.from("records").delete().in("farm_id", this.farmIds);
 		for (const table of [
 			"events",
+			"varieties",
 			"crops",
 			"fields",
 			"farm_members",

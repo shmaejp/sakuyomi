@@ -183,6 +183,12 @@ function Photos({ photos }: { photos: Blob[] }) {
 	);
 }
 
+/** 実施日（YYYY-MM-DD）を「10月24日」の形にする。 */
+function dayOf(date: string) {
+	const [, month, day] = date.split("-");
+	return `${Number(month)}月${Number(day)}日`;
+}
+
 function Summary({ summary }: { summary: RecordSummary }) {
 	if (summary.items.length === 0)
 		return <p>記録しました。取り出せる内容はありませんでした。</p>;
@@ -192,10 +198,35 @@ function Summary({ summary }: { summary: RecordSummary }) {
 				// 取り出しは並び順そのものが識別になる。
 				// biome-ignore lint/suspicious/noArrayIndexKey: 要約の中で順序は変わらない
 				<li key={i}>
-					<span className="kind">{KIND_LABELS[item.kind]}</span>
+					<span className="kind">
+						{KIND_LABELS[item.kind]}
+						<span className="performed-on">{dayOf(item.performedOn)}</span>
+					</span>
 					<span>{item.text}</span>
+					{item.kind === "judgment" && (
+						<>
+							<span className="detail">判断者：{item.judge.name}</span>
+							{item.grounds.length > 0 && (
+								<span className="detail">
+									根拠：{item.grounds.map((ground) => ground.text).join("／")}
+								</span>
+							)}
+						</>
+					)}
+					{item.kind === "work" && item.materials.length > 0 && (
+						<span className="detail">
+							資材：
+							{item.materials
+								.map((m) =>
+									[m.name, m.dilution, m.amount]
+										.filter((part) => part !== null)
+										.join(" "),
+								)
+								.join("、")}
+						</span>
+					)}
 					<span className="links">
-						{[...item.fields, ...item.crops]
+						{[...item.fields, ...item.crops, ...item.varieties]
 							.map((link) => (link.id ? link.name : `${link.name}（未確定）`))
 							.join("・")}
 					</span>

@@ -12,7 +12,7 @@ export function openAiTranscriber(apiKey: string): Transcriber {
 		form.set("language", "ja");
 		form.set("response_format", "json");
 		if (vocabulary.length > 0)
-			form.set("prompt", `農場の圃場・作目の名前：${vocabulary.join("、")}`);
+			form.set("prompt", `農場で使う言葉：${vocabulary.join("、")}`);
 
 		const response = await fetch(
 			"https://api.openai.com/v1/audio/transcriptions",

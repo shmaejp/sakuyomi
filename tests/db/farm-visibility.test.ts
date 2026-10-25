@@ -3,7 +3,13 @@ import { loadMyFarm } from "../../src/farm";
 import type { Client } from "../../src/lib/supabase";
 import { anonClient, TestData } from "./support";
 
-const tables = ["farms", "farm_members", "fields", "crops"] as const;
+const tables = [
+	"farms",
+	"farm_members",
+	"fields",
+	"crops",
+	"varieties",
+] as const;
 
 async function visibleRows(client: Client) {
 	const rows: Record<string, unknown[]> = {};
@@ -30,7 +36,11 @@ describe("農場の見え方", () => {
 			name: "旧2番ハウス",
 			retiredAt: new Date().toISOString(),
 		});
-		await data.crop(farmA, { name: "トマト", spokenNames: ["とまと"] });
+		const tomato = await data.crop(farmA, {
+			name: "トマト",
+			spokenNames: ["とまと"],
+		});
+		await data.variety(farmA, tomato, { name: "桃太郎" });
 		await data.member(farmA, { displayName: "父", spokenNames: ["親父"] });
 	});
 

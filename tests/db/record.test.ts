@@ -149,6 +149,8 @@ describe("記録処理関数", () => {
 				{
 					kind: "observation",
 					text: "トマトの葉に斑点が出ていた",
+					performedOn: "2026-10-24",
+					varieties: [],
 					fields: [
 						{ id: house1, name: "1番ハウス" },
 						{ id: house2, name: "2番ハウス" },
@@ -158,11 +160,14 @@ describe("記録処理関数", () => {
 				{
 					kind: "work",
 					text: "1番と2番ハウスのトマトに消毒した",
+					performedOn: "2026-10-24",
+					varieties: [],
 					fields: [
 						{ id: house1, name: "1番ハウス" },
 						{ id: house2, name: "2番ハウス" },
 					],
 					crops: [{ id: tomato, name: "トマト" }],
+					materials: [],
 				},
 			],
 		});
@@ -246,9 +251,10 @@ describe("記録処理関数", () => {
 			.select("transcription_seconds, structuring_seconds, total_seconds")
 			.eq("record_id", recordId)
 			.single();
-		expect(metrics?.transcription_seconds).toBeGreaterThanOrEqual(0.1);
+		// setTimeout は、Windows では performance.now() で測るとわずかに早く戻ることがあるので、10ms までずれを許す
+		expect(metrics?.transcription_seconds).toBeGreaterThanOrEqual(0.09);
 		expect(metrics?.transcription_seconds).toBeLessThan(0.3);
-		expect(metrics?.structuring_seconds).toBeGreaterThanOrEqual(0.3);
+		expect(metrics?.structuring_seconds).toBeGreaterThanOrEqual(0.29);
 		expect(metrics?.total_seconds).toBeGreaterThan(
 			(metrics?.transcription_seconds ?? 0) +
 				(metrics?.structuring_seconds ?? 0),
@@ -383,6 +389,8 @@ describe("記録処理関数", () => {
 			{
 				kind: "observation",
 				text: "裏の畑のナスに虫がついていた",
+				performedOn: "2026-10-24",
+				varieties: [],
 				fields: [{ id: null, name: "裏の畑" }],
 				crops: [{ id: null, name: "ナス" }],
 			},
@@ -401,23 +409,81 @@ describe("記録処理関数", () => {
 		]);
 	});
 
-	it("文字起こしと構造化に、その農場の廃止されていない圃場と作目が、呼び名つきで渡される", async () => {
+	it("文字起こしに、その農場の圃場・作目・品種の名前と呼び名、過去の作業に出た資材名が語彙として渡される", async () => {
 		const me = await signedInMember();
 		await data.field(farm, {
 			name: "旧3番ハウス",
 			spokenNames: ["3番"],
 			retiredAt: new Date().toISOString(),
 		});
+		await data.variety(farm, tomato, {
+			name: "桃太郎",
+			spokenNames: ["ももたろう"],
+		});
+		// 過去の作業に出た資材（同じ資材が 2 回出ても語彙には 1 つ）
+		await handleRecordRequest(
+			recordRequest(me.accessToken, {}),
+			deps(
+				fakeTranscriber("ダコニールとアファームで消毒、草にはバスタ")
+					.transcribe,
+				fakeStructurer(() => ({
+					items: [
+						{
+							kind: "work",
+							text: "ダコニールとアファームで消毒した",
+							fields: [],
+							crops: [],
+							materials: [
+								{ name: "ダコニール", amount: null, dilution: "1000倍" },
+								{ name: "アファーム", amount: null, dilution: null },
+							],
+						},
+						{
+							kind: "work",
+							text: "ダコニールを足した",
+							fields: [],
+							crops: [],
+							materials: [{ name: "ダコニール", amount: null, dilution: null }],
+						},
+					],
+				})).structure,
+			),
+		);
+		// 別の農場の圃場・品種・資材は渡らない
 		const neighborFarm = await data.farm("隣の農場");
 		await data.field(neighborFarm, { name: "南の畑" });
+		const neighborCrop = await data.crop(neighborFarm, { name: "ナス" });
+		await data.variety(neighborFarm, neighborCrop, { name: "千両" });
+		const neighbor = await data.user("neighbor");
+		await data.member(neighborFarm, {
+			userId: neighbor.userId,
+			displayName: "隣の人",
+		});
+		await handleRecordRequest(
+			recordRequest(neighbor.accessToken, {}),
+			deps(
+				fakeTranscriber("スミチオンをまいた").transcribe,
+				fakeStructurer(() => ({
+					items: [
+						{
+							kind: "work",
+							text: "スミチオンをまいた",
+							fields: [],
+							crops: [],
+							materials: [{ name: "スミチオン", amount: null, dilution: null }],
+						},
+					],
+				})).structure,
+			),
+		);
 		const transcriber = fakeTranscriber("とまとの葉が黄色い");
-		const structurer = fakeStructurer(() => ({ items: [] }));
 
 		await handleRecordRequest(
-			recordRequest(me.accessToken, {
-				recordedAt: "2026-10-24T08:30:00.000Z",
-			}),
-			deps(transcriber.transcribe, structurer.structure),
+			recordRequest(me.accessToken, {}),
+			deps(
+				transcriber.transcribe,
+				fakeStructurer(() => ({ items: [] })).structure,
+			),
 		);
 
 		expect(transcriber.calls).toHaveLength(1);
@@ -430,13 +496,54 @@ describe("記録処理関数", () => {
 				"2番",
 				"トマト",
 				"とまと",
+				"桃太郎",
+				"ももたろう",
+				"ダコニール",
+				"アファーム",
 			].sort(),
 		);
+	});
+
+	it("構造化に、その農場の廃止されていない圃場・作目・品種・離れていない農場メンバーが呼び名つきで、記録者・記録日時と一緒に渡される", async () => {
+		const me = await signedInMember();
+		const father = await data.member(farm, {
+			displayName: "父",
+			spokenNames: ["親父", "お父さん"],
+		});
+		await data.member(farm, {
+			displayName: "離れた人",
+			leftAt: new Date().toISOString(),
+		});
+		await data.field(farm, {
+			name: "旧3番ハウス",
+			spokenNames: ["3番"],
+			retiredAt: new Date().toISOString(),
+		});
+		const momotaro = await data.variety(farm, tomato, {
+			name: "桃太郎",
+			spokenNames: ["ももたろう"],
+		});
+		const neighborFarm = await data.farm("隣の農場");
+		await data.field(neighborFarm, { name: "南の畑" });
+		await data.member(neighborFarm, { displayName: "隣の人" });
+		const structurer = fakeStructurer(() => ({ items: [] }));
+
+		await handleRecordRequest(
+			recordRequest(me.accessToken, {
+				recordedAt: "2026-10-24T08:30:00.000Z",
+			}),
+			deps(
+				fakeTranscriber("とまとの葉が黄色い").transcribe,
+				structurer.structure,
+			),
+		);
+
 		expect(structurer.calls).toEqual([
 			{
 				transcript: "とまとの葉が黄色い",
 				photos: [],
 				recordedAt: "2026-10-24T08:30:00.000Z",
+				recorderId: me.memberId,
 				fields: [
 					{
 						id: house1,
@@ -446,29 +553,60 @@ describe("記録処理関数", () => {
 					{ id: house2, name: "2番ハウス", spokenNames: ["2番"] },
 				],
 				crops: [{ id: tomato, name: "トマト", spokenNames: ["とまと"] }],
+				varieties: [
+					{
+						id: momotaro,
+						cropId: tomato,
+						name: "桃太郎",
+						spokenNames: ["ももたろう"],
+					},
+				],
+				members: [
+					{ id: me.memberId, name: "晋弥", spokenNames: [] },
+					{ id: father, name: "父", spokenNames: ["親父", "お父さん"] },
+				],
 			},
 		]);
 	});
 
-	it("別の農場のメンバーからは、その記録も版も取り出しも結びつきも正本も出来事も計測も見えない", async () => {
+	it("別の農場のメンバーからは、その記録も版も取り出しも結びつきも根拠も資材も品種も正本も出来事も計測も見えない", async () => {
 		const me = await signedInMember();
+		const momotaro = await data.variety(farm, tomato, { name: "桃太郎" });
 		const recordId = crypto.randomUUID();
-		await handleRecordRequest(
+		const response = await handleRecordRequest(
 			recordRequest(me.accessToken, { recordId }),
 			deps(
-				fakeTranscriber("1番のトマトに消毒した").transcribe,
+				fakeTranscriber("1番の桃太郎に斑点。消毒した").transcribe,
 				fakeStructurer(() => ({
 					items: [
+						{
+							kind: "observation",
+							text: "1番の桃太郎に斑点",
+							fields: [{ id: house1 }],
+							crops: [{ id: tomato }],
+							varieties: [{ id: momotaro }],
+						},
+						{
+							kind: "judgment",
+							text: "消毒することにした",
+							fields: [{ id: house1 }],
+							crops: [{ id: tomato }],
+							grounds: [{ observation: 0 }],
+						},
 						{
 							kind: "work",
 							text: "1番のトマトに消毒した",
 							fields: [{ id: house1 }],
 							crops: [{ id: tomato }],
+							materials: [
+								{ name: "ダコニール", amount: null, dilution: "1000倍" },
+							],
 						},
 					],
 				})).structure,
 			),
 		);
+		expect(response.status).toBe(200);
 		const neighborFarm = await data.farm("隣の農場");
 		const neighbor = await data.user("neighbor");
 		await data.member(neighborFarm, {
@@ -482,11 +620,18 @@ describe("記録処理関数", () => {
 			"extractions",
 			"extraction_fields",
 			"extraction_crops",
+			"extraction_varieties",
+			"grounds",
+			"work_materials",
+			"varieties",
 			"events",
 			"record_metrics",
 		] as const) {
 			const { data: rows } = await neighbor.client.from(table).select("*");
 			expect(rows, table).toEqual([]);
+			// 見えないのが RLS のためで、行がないためではないことを確かめる
+			const { data: mine } = await me.client.from(table).select("*");
+			expect(mine?.length, table).toBeGreaterThan(0);
 		}
 		const audio = await neighbor.client.storage
 			.from("originals")
@@ -540,24 +685,53 @@ describe("記録処理関数", () => {
 		expect(versions).toEqual([{ transcript: "" }]);
 	});
 
-	it("取り出しを、別の農場の圃場・作目には結びつけられない", async () => {
+	it("取り出しを、別の農場の圃場・作目・品種には結びつけられず、別の農場のメンバーを判断者にできない", async () => {
 		const me = await signedInMember();
 		const neighborFarm = await data.farm("隣の農場");
 		const neighborField = await data.field(neighborFarm, { name: "南の畑" });
 		const neighborCrop = await data.crop(neighborFarm, { name: "ナス" });
+		const neighborVariety = await data.variety(neighborFarm, neighborCrop, {
+			name: "千両",
+		});
+		const neighborMember = await data.member(neighborFarm, {
+			displayName: "隣の人",
+		});
 
-		for (const link of [
-			{ fields: [{ id: neighborField }], crops: [] },
-			{ fields: [], crops: [{ id: neighborCrop }] },
-		]) {
+		const items: StructuredItem[] = [
+			{
+				kind: "observation",
+				text: "南の畑のナス",
+				fields: [{ id: neighborField }],
+				crops: [],
+			},
+			{
+				kind: "observation",
+				text: "南の畑のナス",
+				fields: [],
+				crops: [{ id: neighborCrop }],
+			},
+			{
+				kind: "observation",
+				text: "千両",
+				fields: [],
+				crops: [],
+				varieties: [{ id: neighborVariety }],
+			},
+			{
+				kind: "judgment",
+				text: "消毒することにした",
+				fields: [],
+				crops: [],
+				judgeId: neighborMember,
+			},
+		];
+		for (const item of items) {
 			await expect(
 				handleRecordRequest(
 					recordRequest(me.accessToken, {}),
 					deps(
 						fakeTranscriber("南の畑のナス").transcribe,
-						fakeStructurer(() => ({
-							items: [{ kind: "observation", text: "南の畑のナス", ...link }],
-						})).structure,
+						fakeStructurer(() => ({ items: [item] })).structure,
 					),
 				),
 			).rejects.toBeTruthy();
@@ -740,6 +914,368 @@ describe("記録処理関数", () => {
 			.eq("id", recordId)
 			.single();
 		expect(record).toEqual({ recorded_at: "2026-10-24T08:30:00+00:00" });
+	});
+
+	it("判断者にアプリを使わない農場メンバーを指定でき、根拠が同じ記録の観察や文章だけで残る", async () => {
+		const me = await signedInMember();
+		const father = await data.member(farm, {
+			displayName: "父",
+			spokenNames: ["親父"],
+		});
+		const recordId = crypto.randomUUID();
+		const structurer = fakeStructurer(() => ({
+			items: [
+				{
+					kind: "observation",
+					text: "トマトの葉に斑点が出ていた",
+					fields: [{ id: house1 }],
+					crops: [{ id: tomato }],
+				},
+				{
+					kind: "judgment",
+					text: "明日消毒することにした",
+					fields: [{ id: house1 }],
+					crops: [{ id: tomato }],
+					judgeId: father,
+					grounds: [
+						{ observation: 0 },
+						{ text: "JA の指導員に早めに消毒するよう言われた" },
+					],
+				},
+				{
+					kind: "judgment",
+					text: "水やりは控えることにした",
+					fields: [{ id: house1 }],
+					crops: [{ id: tomato }],
+				},
+			],
+		}));
+
+		const response = await handleRecordRequest(
+			recordRequest(me.accessToken, { recordId }),
+			deps(
+				fakeTranscriber(
+					"1番のトマトの葉に斑点。JA の指導員に言われたし、親父が明日消毒するって。水やりは控える。",
+				).transcribe,
+				structurer.structure,
+			),
+		);
+
+		expect(response.status).toBe(200);
+		const summary: RecordSummary = await response.json();
+		expect(summary.items).toMatchObject([
+			{ kind: "observation", text: "トマトの葉に斑点が出ていた" },
+			{
+				kind: "judgment",
+				text: "明日消毒することにした",
+				judge: { id: father, name: "父" },
+				grounds: [
+					{ observation: 0, text: "トマトの葉に斑点が出ていた" },
+					{
+						observation: null,
+						text: "JA の指導員に早めに消毒するよう言われた",
+					},
+				],
+			},
+			{
+				kind: "judgment",
+				text: "水やりは控えることにした",
+				judge: { id: me.memberId, name: "晋弥" },
+				grounds: [],
+			},
+		]);
+		const { data: extractions } = await me.client
+			.from("extractions")
+			.select(
+				"id, position, kind, judge_member_id, grounds!grounds_judgment_id_fkey (position, observation_id, body), versions!inner (record_id)",
+			)
+			.eq("versions.record_id", recordId)
+			.order("position");
+		const observationId = extractions?.[0]?.id;
+		expect(extractions).toMatchObject([
+			{ kind: "observation", judge_member_id: null, grounds: [] },
+			{
+				kind: "judgment",
+				judge_member_id: father,
+				grounds: expect.arrayContaining([
+					{ position: 0, observation_id: observationId, body: null },
+					{
+						position: 1,
+						observation_id: null,
+						body: "JA の指導員に早めに消毒するよう言われた",
+					},
+				]),
+			},
+			{ kind: "judgment", judge_member_id: me.memberId, grounds: [] },
+		]);
+	});
+
+	it("作業の資材・量・倍率が、混ぜて使った資材ごとに保存され、要約に出る", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+		const structurer = fakeStructurer(() => ({
+			items: [
+				{
+					kind: "work",
+					text: "1番のトマトにダコニールとアファームを混ぜて消毒した",
+					fields: [{ id: house1 }],
+					crops: [{ id: tomato }],
+					materials: [
+						{ name: "ダコニール", amount: "200リットル", dilution: "1000倍" },
+						{ name: "アファーム", amount: null, dilution: "2000倍" },
+					],
+				},
+				{
+					kind: "work",
+					text: "1番の草を刈った",
+					fields: [{ id: house1 }],
+					crops: [],
+				},
+			],
+		}));
+
+		const response = await handleRecordRequest(
+			recordRequest(me.accessToken, { recordId }),
+			deps(
+				fakeTranscriber(
+					"1番のトマトにダコニール1000倍とアファーム2000倍、200リットル。草も刈った。",
+				).transcribe,
+				structurer.structure,
+			),
+		);
+
+		const summary: RecordSummary = await response.json();
+		expect(summary.items).toMatchObject([
+			{
+				kind: "work",
+				materials: [
+					{ name: "ダコニール", amount: "200リットル", dilution: "1000倍" },
+					{ name: "アファーム", amount: null, dilution: "2000倍" },
+				],
+			},
+			{ kind: "work", materials: [] },
+		]);
+		const { data: extractions } = await me.client
+			.from("extractions")
+			.select(
+				"position, work_materials (position, name, amount, dilution), versions!inner (record_id)",
+			)
+			.eq("versions.record_id", recordId)
+			.order("position");
+		expect(extractions?.[0]?.work_materials).toEqual(
+			expect.arrayContaining([
+				{
+					position: 0,
+					name: "ダコニール",
+					amount: "200リットル",
+					dilution: "1000倍",
+				},
+				{ position: 1, name: "アファーム", amount: null, dilution: "2000倍" },
+			]),
+		);
+		expect(extractions?.[0]?.work_materials).toHaveLength(2);
+		expect(extractions?.[1]?.work_materials).toEqual([]);
+	});
+
+	it("話から読み取った実施日が残り、読み取れなければ記録日時の（日本時間の）日付になる", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+		const structurer = fakeStructurer(() => ({
+			items: [
+				{
+					kind: "work",
+					text: "昨日1番のトマトに消毒した",
+					fields: [{ id: house1 }],
+					crops: [{ id: tomato }],
+					performedOn: "2026-10-24",
+				},
+				{
+					kind: "observation",
+					text: "1番のトマトの葉が黄色い",
+					fields: [{ id: house1 }],
+					crops: [{ id: tomato }],
+				},
+			],
+		}));
+
+		const response = await handleRecordRequest(
+			// 日本時間では 2026-10-25 の 1:30
+			recordRequest(me.accessToken, {
+				recordId,
+				recordedAt: "2026-10-24T16:30:00.000Z",
+			}),
+			deps(
+				fakeTranscriber("昨日1番のトマトに消毒した。葉が黄色い。").transcribe,
+				structurer.structure,
+			),
+		);
+
+		const summary: RecordSummary = await response.json();
+		expect(summary.items.map((item) => item.performedOn)).toEqual([
+			"2026-10-24",
+			"2026-10-25",
+		]);
+		const { data: extractions } = await me.client
+			.from("extractions")
+			.select("performed_on, versions!inner (record_id)")
+			.eq("versions.record_id", recordId)
+			.order("position");
+		expect(extractions?.map((e) => e.performed_on)).toEqual([
+			"2026-10-24",
+			"2026-10-25",
+		]);
+	});
+
+	it("取り出しが品種に結びつき、登録にない品種は話の中の言い方のまま未確定として結びつく", async () => {
+		const me = await signedInMember();
+		const momotaro = await data.variety(farm, tomato, {
+			name: "桃太郎",
+			spokenNames: ["ももたろう"],
+		});
+		const recordId = crypto.randomUUID();
+		const structurer = fakeStructurer(() => ({
+			items: [
+				{
+					kind: "observation",
+					text: "桃太郎とアイコの実が割れていた",
+					fields: [{ id: house1 }],
+					crops: [{ id: tomato }],
+					varieties: [{ id: momotaro }, { spokenAs: "アイコ" }],
+				},
+			],
+		}));
+
+		const response = await handleRecordRequest(
+			recordRequest(me.accessToken, { recordId }),
+			deps(
+				fakeTranscriber("1番の桃太郎とアイコの実が割れてた").transcribe,
+				structurer.structure,
+			),
+		);
+
+		const summary: RecordSummary = await response.json();
+		expect(summary.items).toMatchObject([
+			{
+				varieties: [
+					{ id: momotaro, name: "桃太郎" },
+					{ id: null, name: "アイコ" },
+				],
+			},
+		]);
+		const { data: extractions } = await me.client
+			.from("extractions")
+			.select(
+				"extraction_varieties (variety_id, spoken_as), versions!inner (record_id)",
+			)
+			.eq("versions.record_id", recordId);
+		expect(extractions?.[0]?.extraction_varieties).toEqual(
+			expect.arrayContaining([
+				{ variety_id: momotaro, spoken_as: null },
+				{ variety_id: null, spoken_as: "アイコ" },
+			]),
+		);
+	});
+
+	it("判断者・根拠は判断にだけ、資材は作業にだけ残せ、根拠が指せるのは同じ記録の観察だけ", async () => {
+		const me = await signedInMember();
+		const recordId = crypto.randomUUID();
+		const otherRecordId = crypto.randomUUID();
+		const noParts = deps(
+			fakeTranscriber("").transcribe,
+			fakeStructurer(() => ({ items: [] })).structure,
+		);
+		await handleRecordRequest(
+			recordRequest(me.accessToken, { recordId }),
+			noParts,
+		);
+		await handleRecordRequest(
+			recordRequest(me.accessToken, { recordId: otherRecordId }),
+			deps(
+				fakeTranscriber("葉に斑点").transcribe,
+				fakeStructurer(() => ({
+					items: [
+						{ kind: "observation", text: "葉に斑点", fields: [], crops: [] },
+					],
+				})).structure,
+			),
+		);
+		const { data: otherObservation } = await me.client
+			.from("extractions")
+			.select("id, versions!inner (record_id)")
+			.eq("versions.record_id", otherRecordId)
+			.single();
+		const base = { body: "内容", performed_on: "2026-10-24" };
+		const judgment = {
+			...base,
+			kind: "judgment",
+			judge_member_id: me.memberId,
+		};
+
+		const rejected = [
+			// 判断以外に判断者
+			[{ ...base, kind: "observation", judge_member_id: me.memberId }],
+			// 判断に判断者がない
+			[{ ...base, kind: "judgment" }],
+			// 判断以外に根拠
+			[{ ...base, kind: "work", grounds: [{ body: "理由" }] }],
+			// 作業以外に資材
+			[{ ...judgment, materials: [{ name: "ダコニール" }] }],
+			// 根拠が観察でない取り出しを指す
+			[
+				{ ...base, kind: "work" },
+				{ ...judgment, grounds: [{ observation: 0 }] },
+			],
+			// 根拠が存在しない取り出しを指す
+			[{ ...judgment, grounds: [{ observation: 5 }] }],
+		];
+		for (const items of rejected) {
+			const saved = await me.client.rpc("save_ai_version", {
+				target_record_id: recordId,
+				items,
+				metrics: {
+					transcription_seconds: 0,
+					structuring_seconds: 0,
+					seconds_before_save: 0,
+					input_tokens: 0,
+					output_tokens: 0,
+				},
+			});
+			expect(saved.error, JSON.stringify(items)).not.toBeNull();
+		}
+		// 根拠が別の記録の観察を指す
+		const { data: version } = await me.client
+			.from("versions")
+			.select("id")
+			.eq("record_id", recordId)
+			.single();
+		const { data: myJudgment } = await me.client
+			.from("extractions")
+			.insert({
+				farm_id: farm,
+				version_id: version?.id ?? "",
+				position: 0,
+				kind: "judgment",
+				body: "消毒することにした",
+				performed_on: "2026-10-24",
+				judge_member_id: me.memberId,
+			})
+			.select("id")
+			.single();
+		expect(myJudgment).not.toBeNull();
+		const crossRecord = await me.client.from("grounds").insert({
+			farm_id: farm,
+			judgment_id: myJudgment?.id ?? "",
+			position: 0,
+			observation_id: otherObservation?.id ?? "",
+		});
+		expect(crossRecord.error).not.toBeNull();
+
+		const { data: grounds } = await me.client.from("grounds").select("id");
+		const { data: materials } = await me.client
+			.from("work_materials")
+			.select("id");
+		expect(grounds).toEqual([]);
+		expect(materials).toEqual([]);
 	});
 
 	it("人の版はまだ作れない", async () => {

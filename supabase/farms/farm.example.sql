@@ -37,13 +37,24 @@ fields as (
     ('<圃場の名前>', array['<呼び名>'], null::double precision, null::double precision)
   ) as f (name, spoken_names, latitude, longitude)
   returning id
+),
+crops as (
+  insert into public.crops (farm_id, name, spoken_names)
+  select farm.id, c.name, c.spoken_names
+  from farm
+  cross join (values
+    ('<作目の名前>', array['<呼び名>'])
+  ) as c (name, spoken_names)
+  returning id, farm_id, name
 )
-insert into public.crops (farm_id, name, spoken_names)
-select farm.id, c.name, c.spoken_names
-from farm
-cross join (values
-  ('<作目の名前>', array['<呼び名>'])
-) as c (name, spoken_names);
+-- 品種は任意で、1 行目に書いた作目の名前で、どの作目の下に置くかを決める。
+-- 品種を登録しないなら、作目の名前を '-' にする（どの作目にも当たらないので、何も入らない）。
+insert into public.varieties (farm_id, crop_id, name, spoken_names)
+select crops.farm_id, crops.id, v.name, v.spoken_names
+from crops
+join (values
+  ('<作目の名前>', '<品種の名前>', array['<呼び名>'])
+) as v (crop_name, name, spoken_names) on v.crop_name = crops.name;
 
 -- 招待していないメールアドレスを書くと、そのメンバーは user_id が null（アプリを使わないメンバー）になる。
 -- 結びつかなかった人がいないか、ここで確かめる。
