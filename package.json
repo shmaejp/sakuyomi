@@ -16,7 +16,8 @@
 		"db:start": "supabase start",
 		"db:stop": "supabase stop",
 		"db:reset": "supabase db reset",
-		"db:types": "supabase gen types typescript --local > src/lib/database.types.ts"
+		"db:types": "supabase gen types typescript --local > src/lib/database.types.ts",
+		"test:live": "vitest run --config vitest.live.config.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.2",
