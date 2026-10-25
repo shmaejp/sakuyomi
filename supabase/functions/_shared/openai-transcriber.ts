@@ -22,8 +22,16 @@ export function openAiTranscriber(apiKey: string): Transcriber {
 				body: form,
 			},
 		);
-		if (!response.ok)
-			throw new Error(`文字起こしに失敗しました（HTTP ${response.status}）`);
+		if (!response.ok) {
+			// 429 は残高切れ（insufficient_quota）と送りすぎ（rate_limit_exceeded）の両方があるので、code で見分ける。
+			const failure: { error?: { code?: string } } = await response
+				.json()
+				.catch(() => ({}));
+			const code = failure.error?.code ?? "不明";
+			throw new Error(
+				`文字起こしに失敗しました（HTTP ${response.status}、${code}）`,
+			);
+		}
 		const body: { text: string } = await response.json();
 		return { text: body.text };
 	};
