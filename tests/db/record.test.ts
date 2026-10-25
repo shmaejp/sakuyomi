@@ -1274,13 +1274,14 @@ describe("記録処理関数", () => {
 			});
 			expect(saved.error, JSON.stringify(items)).not.toBeNull();
 		}
-		// 根拠が別の記録の観察を指す
+		// 根拠が別の記録の観察を指す。入口（save_ai_version）からは作れない形なので、判断は管理用のクライアントで用意し、
+		// 根拠だけを直接入れようとする（版・取り出しへの直接の書き込みは、それだけでも拒否される。#15）。
 		const { data: version } = await me.client
 			.from("versions")
 			.select("id")
 			.eq("record_id", recordId)
 			.single();
-		const { data: myJudgment } = await me.client
+		const { data: myJudgment } = await adminClient()
 			.from("extractions")
 			.insert({
 				farm_id: farm,
