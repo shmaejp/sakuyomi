@@ -1,14 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Client } from "../../src/lib/supabase";
-import { loadRelatedRecords, type RelatedRecord } from "../../src/related";
-import { TestData } from "./support";
-
-/** 返った記録を、取り出しの文章で見分ける。 */
-function texts(records: RelatedRecord[]) {
-	return records.map((r) =>
-		r.summary.items.map((item) => item.text).join("／"),
-	);
-}
+import { loadRelatedRecords } from "../../src/related";
+import { TestData, relatedTexts as texts } from "./support";
 
 describe("即時応答の後半（直近の記録・去年の同じ時期の記録）", () => {
 	let data: TestData;

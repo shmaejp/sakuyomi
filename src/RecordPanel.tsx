@@ -223,6 +223,8 @@ function SentResult({ sent: { record, response } }: { sent: SentRecord }) {
 								setSummary(saved);
 								setCorrecting(false);
 							}}
+							// 編集をやめても、要約と直近の記録は最新の版で出す。
+							onStale={setSummary}
 							onCancel={() => setCorrecting(false)}
 						/>
 					) : (
@@ -237,7 +239,8 @@ function SentResult({ sent: { record, response } }: { sent: SentRecord }) {
 							</button>
 						</>
 					)}
-					<Related recordId={record.recordId} />
+					{/* 訂正で版が変わったら（圃場・作目が変わることがあるので）、作り直して読み直す。 */}
+					<Related key={summary.versionId} recordId={record.recordId} />
 				</>
 			) : (
 				<p>記録は保存しました。要約は作れませんでした。</p>

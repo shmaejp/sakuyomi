@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { inject } from "vitest";
 import type { Database } from "../../src/lib/database.types";
 import type { Client } from "../../src/lib/supabase";
+import type { RelatedRecord } from "../../src/related";
 
 const options = { auth: { persistSession: false, autoRefreshToken: false } };
 
@@ -330,4 +331,11 @@ export class TestData {
 		await this.admin.from("farms").delete().in("id", this.farmIds);
 		for (const id of this.userIds) await this.admin.auth.admin.deleteUser(id);
 	}
+}
+
+/** 即時応答の後半で返った記録を、取り出しの文章で見分ける。 */
+export function relatedTexts(records: RelatedRecord[]) {
+	return records.map((r) =>
+		r.summary.items.map((item) => item.text).join("／"),
+	);
 }

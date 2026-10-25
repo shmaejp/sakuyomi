@@ -7,11 +7,17 @@ import {
 	toCorrectedItems,
 } from "../../src/correction";
 import type { Client } from "../../src/lib/supabase";
+import { loadRelatedRecords } from "../../src/related";
 import {
 	loadSummary,
 	type RecordSummary,
 } from "../../supabase/functions/_shared/summary.ts";
-import { adminClient, TestData, type TestItem } from "./support";
+import {
+	adminClient,
+	TestData,
+	type TestItem,
+	relatedTexts as texts,
+} from "./support";
 
 describe("訂正", () => {
 	let data: TestData;
@@ -573,6 +579,112 @@ describe("訂正", () => {
 					correct(me.client, before, () => [asUntypedItem(wrong)]),
 				).rejects.toThrow(CorrectionRejected);
 			expect(await loadSummary(me.client, before.recordId)).toEqual(before);
+		});
+	});
+
+	describe("訂正の後の即時応答の後半", () => {
+		/** 自分の記録を 1 件作る（取り出しは 1 つで、実施日は記録した日）。 */
+		async function recordOn(
+			recordedAt: string,
+			body: string,
+			links: { fieldIds?: string[]; cropIds?: string[] },
+		) {
+			const recordId = await data.record(farm, {
+				recorderId: me.memberId,
+				recordedAt,
+				items: [
+					{
+						kind: "observation",
+						body,
+						performedOn: recordedAt.slice(0, 10),
+						...links,
+					},
+				],
+			});
+			const summary = await loadSummary(me.client, recordId);
+			if (!summary) throw new Error("要約がありません");
+			return summary;
+		}
+
+		it("訂正で結びつけた圃場・作目では他の記録の直近の記録・去年の同じ時期の記録に出て、外した圃場・作目では出なくなる", async () => {
+			const cucumber = await data.crop(farm, { name: "キュウリ" });
+			const house2 = await data.field(farm, { name: "2番ハウス" });
+			const lastYearSummary = await recordOn(
+				"2025-10-20T00:00:00Z",
+				"去年の記録",
+				{
+					fieldIds: [house2],
+					cropIds: [cucumber],
+				},
+			);
+			const tomatoToday = await recordOn(
+				"2026-10-24T00:00:00Z",
+				"1番のトマト",
+				{
+					fieldIds: [house1],
+					cropIds: [tomato],
+				},
+			);
+			const cucumberToday = await recordOn(
+				"2026-10-24T01:00:00Z",
+				"2番のキュウリ",
+				{ fieldIds: [house2], cropIds: [cucumber] },
+			);
+			const beforeTomato = await loadRelatedRecords(
+				me.client,
+				tomatoToday.recordId,
+			);
+			expect(texts(beforeTomato.recent)).toEqual([]);
+			expect(texts(beforeTomato.lastYear)).toEqual([]);
+			const beforeCucumber = await loadRelatedRecords(
+				me.client,
+				cucumberToday.recordId,
+			);
+			expect(texts(beforeCucumber.recent)).toEqual(["去年の記録"]);
+			expect(texts(beforeCucumber.lastYear)).toEqual(["去年の記録"]);
+
+			// 去年の記録を、キュウリと 2 番ハウスから、トマトと 1 番ハウスに直す。
+			await correct(me.client, lastYearSummary, ([item]) => [
+				{
+					...(item as CorrectedItem),
+					fields: [{ id: house1 }],
+					crops: [{ id: tomato }],
+				},
+			]);
+
+			const afterTomato = await loadRelatedRecords(
+				me.client,
+				tomatoToday.recordId,
+			);
+			expect(texts(afterTomato.recent)).toEqual(["去年の記録"]);
+			expect(texts(afterTomato.lastYear)).toEqual(["去年の記録"]);
+			const afterCucumber = await loadRelatedRecords(
+				me.client,
+				cucumberToday.recordId,
+			);
+			expect(texts(afterCucumber.recent)).toEqual([]);
+			expect(texts(afterCucumber.lastYear)).toEqual([]);
+		});
+
+		it("訂正した記録自身の即時応答の後半は、直した圃場・作目で取り直される", async () => {
+			const cucumber = await data.crop(farm, { name: "キュウリ" });
+			await recordOn("2026-10-20T00:00:00Z", "前のキュウリ", {
+				cropIds: [cucumber],
+			});
+			const today = await recordOn("2026-10-24T00:00:00Z", "今日の記録", {
+				cropIds: [tomato],
+			});
+			expect(
+				texts((await loadRelatedRecords(me.client, today.recordId)).recent),
+			).toEqual([]);
+
+			await correct(me.client, today, ([item]) => [
+				{ ...(item as CorrectedItem), crops: [{ id: cucumber }] },
+			]);
+
+			expect(
+				texts((await loadRelatedRecords(me.client, today.recordId)).recent),
+			).toEqual(["前のキュウリ"]);
 		});
 	});
 });

@@ -30,11 +30,14 @@ type Choice = { id: string; name: string; spokenNames: string[] };
 export function CorrectionEditor({
 	summary,
 	onSaved,
+	onStale,
 	onCancel,
 }: {
 	summary: RecordSummary;
 	/** 保存できたとき（何も変わっていなかったときも）。最新の版の要約を渡す。 */
 	onSaved: (summary: RecordSummary) => void;
+	/** 他の人が先に直していたとき。編集は続けたまま、最新の版の要約を渡す。 */
+	onStale: (summary: RecordSummary) => void;
 	onCancel: () => void;
 }) {
 	const [base, setBase] = useState(summary);
@@ -76,6 +79,7 @@ export function CorrectionEditor({
 				// 他の人の訂正を黙って上書きしない。最新の内容を見せて、直し直してもらう。
 				setBase(result.summary);
 				setItems(toCorrectedItems(result.summary));
+				onStale(result.summary);
 				setMessage(
 					"他のメンバーが先に直していました。最新の内容を表示しています。必要ならもう一度直してください。",
 				);
