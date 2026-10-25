@@ -35,6 +35,15 @@ export type RecordSummary = {
 	/** 写真だけの記録では null。 */
 	transcript: string | null;
 	items: SummaryItem[];
+	/** 最新の版が人の版（訂正済みの記録）なら、最後の訂正者・訂正日時・元にした版。AI の版なら null。 */
+	correction: Correction | null;
+};
+
+export type Correction = {
+	by: { id: string; name: string };
+	/** 訂正日時（ISO 8601）。 */
+	at: string;
+	basedOnVersionId: string;
 };
 
 /** 記録の最新の版の要約。版がなければ null。 */
@@ -70,7 +79,8 @@ function selectVersions(client: Client, recordIds: string[]) {
 	return client
 		.from("versions")
 		.select(
-			`id, record_id, transcript,
+			`id, record_id, transcript, author, created_at, based_on_version_id,
+			corrector:farm_members!versions_corrected_by_member_id_fkey (id, display_name),
 			extractions (
 				id, position, kind, body, performed_on, judge_member_id,
 				judge:farm_members!extractions_judge_member_id_fkey (display_name),
@@ -98,6 +108,19 @@ function toSummary(version: LoadedVersion): RecordSummary {
 		recordId: version.record_id,
 		versionId: version.id,
 		transcript: version.transcript,
+		correction:
+			version.author === "human" &&
+			version.corrector &&
+			version.based_on_version_id
+				? {
+						by: {
+							id: version.corrector.id,
+							name: version.corrector.display_name,
+						},
+						at: version.created_at,
+						basedOnVersionId: version.based_on_version_id,
+					}
+				: null,
 		items: extractions.map((e): SummaryItem => {
 			const base = {
 				text: e.body,

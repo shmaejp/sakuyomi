@@ -220,3 +220,60 @@ button:disabled {
 	flex-direction: column;
 	gap: 4px;
 }
+
+/* 訂正。取り出しごとに枠で区切り、選ぶものは手袋でも押しやすいよう行ごとに並べる。 */
+.corrected {
+	margin: 0;
+	color: var(--color-muted);
+	font-size: 0.9rem;
+}
+
+.correction {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.correction-item {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 12px;
+	border: 1px solid var(--color-border);
+	border-radius: 8px;
+	background: var(--color-surface);
+}
+
+.correction-item textarea {
+	font: inherit;
+	min-height: 4.5em;
+	padding: 12px;
+	border: 1px solid var(--color-border);
+	border-radius: 8px;
+	background: var(--color-surface);
+	color: var(--color-text);
+}
+
+.correction-item .kinds {
+	display: flex;
+	gap: 16px;
+}
+
+/* ラジオボタン・チェックボックスの行。 */
+label.choice {
+	flex-direction: row;
+	align-items: center;
+	gap: 8px;
+	min-height: 44px;
+}
+
+.link-picker {
+	display: flex;
+	flex-direction: column;
+}
+
+.link-title {
+	color: var(--color-muted);
+	font-size: 0.9rem;
+}

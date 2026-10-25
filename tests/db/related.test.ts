@@ -181,7 +181,10 @@ describe("即時応答の後半（直近の記録・去年の同じ時期の記�
 			},
 		);
 		await data.version(farm, corrected, {
-			author: "human",
+			correction: {
+				by: me.memberId,
+				basedOn: await data.latestVersion(corrected),
+			},
 			items: [
 				{
 					kind: "observation",
@@ -199,7 +202,10 @@ describe("即時応答の後半（直近の記録・去年の同じ時期の記�
 			},
 		);
 		await data.version(farm, movedAway, {
-			author: "human",
+			correction: {
+				by: me.memberId,
+				basedOn: await data.latestVersion(movedAway),
+			},
 			items: [
 				{
 					kind: "observation",

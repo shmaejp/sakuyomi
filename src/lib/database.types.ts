@@ -387,17 +387,35 @@ isOneToOne: false
                   ]
                 },"versions": {
                   Row: {
-                    "author": Database["public"]['Enums']["version_author"],"created_at": string,"farm_id": string,"id": string,"record_id": string,"transcript": string | null
+                    "author": Database["public"]['Enums']["version_author"],"based_on_version_id": string | null,"corrected_by_member_id": string | null,"created_at": string,"farm_id": string,"id": string,"record_id": string,"transcript": string | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "author": Database["public"]['Enums']["version_author"],"created_at"?: string,"farm_id": string,"id"?: string,"record_id": string,"transcript"?: string | null
+                    "author": Database["public"]['Enums']["version_author"],"based_on_version_id"?: string | null,"corrected_by_member_id"?: string | null,"created_at"?: string,"farm_id": string,"id"?: string,"record_id": string,"transcript"?: string | null
                   }
                   Update: {
-                    "author"?: Database["public"]['Enums']["version_author"],"created_at"?: string,"farm_id"?: string,"id"?: string,"record_id"?: string,"transcript"?: string | null
+                    "author"?: Database["public"]['Enums']["version_author"],"based_on_version_id"?: string | null,"corrected_by_member_id"?: string | null,"created_at"?: string,"farm_id"?: string,"id"?: string,"record_id"?: string,"transcript"?: string | null
                   }
                   Relationships: [
                     {
+      foreignKeyName: "versions_based_on_version_id_fkey"
+      columns: ["based_on_version_id"]
+isOneToOne: false
+      referencedRelation: "latest_versions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "versions_based_on_version_id_fkey"
+      columns: ["based_on_version_id"]
+isOneToOne: false
+      referencedRelation: "versions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "versions_corrected_by_member_id_fkey"
+      columns: ["corrected_by_member_id"]
+isOneToOne: false
+      referencedRelation: "farm_members"
+      referencedColumns: ["id"]
+    },{
       foreignKeyName: "versions_farm_id_fkey"
       columns: ["farm_id"]
 isOneToOne: false
@@ -463,7 +481,10 @@ isOneToOne: false
                 }
           }
           Functions: {
-            "last_year_records":
+            "correct_record":
+{ Args: { "base_version_id": string,"items": Json,"target_record_id": string }; Returns: Json
+                           },
+"last_year_records":
 { Args: { "season_days": number,"target_record_id": string }; Returns: {
               "record_id": string
             }[]

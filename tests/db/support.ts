@@ -32,10 +32,14 @@ export type TestItem = {
 	/** 実施日（YYYY-MM-DD）。 */
 	performedOn: string;
 	fieldIds?: string[];
+	/** 未確定の圃場の結びつき（話の中の言い方）。登録した圃場の後に並ぶ。 */
+	unresolvedFields?: string[];
 	cropIds?: string[];
 	varietyIds?: string[];
 	/** 判断のときだけ。 */
 	judgeId?: string;
+	/** 判断のときだけ。observation は同じ版の中の観察の位置。 */
+	grounds?: ({ observation: number } | { text: string })[];
 };
 
 /**
@@ -179,7 +183,7 @@ export class TestData {
 			recorderId: string;
 			recordedAt: string;
 			items: TestItem[];
-			author?: Enums["version_author"];
+			transcript?: string;
 		},
 	): Promise<string> {
 		const recordId = crypto.randomUUID();
@@ -192,8 +196,8 @@ export class TestData {
 		});
 		if (error) throw error;
 		await this.version(farmId, recordId, {
-			author: values.author ?? "ai",
 			items: values.items,
+			transcript: values.transcript,
 		});
 		return recordId;
 	}
@@ -202,14 +206,27 @@ export class TestData {
 	async version(
 		farmId: string,
 		recordId: string,
-		values: { author: Enums["version_author"]; items: TestItem[] },
+		values: {
+			items: TestItem[];
+			transcript?: string;
+			/** 人の版（訂正）にするとき、訂正者と元にした版。なければ AI の版。 */
+			correction?: { by: string; basedOn: string };
+		},
 	): Promise<string> {
 		const { data: version, error } = await this.admin
 			.from("versions")
-			.insert({ farm_id: farmId, record_id: recordId, author: values.author })
+			.insert({
+				farm_id: farmId,
+				record_id: recordId,
+				author: values.correction ? "human" : "ai",
+				transcript: values.transcript ?? null,
+				corrected_by_member_id: values.correction?.by ?? null,
+				based_on_version_id: values.correction?.basedOn ?? null,
+			})
 			.select("id")
 			.single();
 		if (error) throw error;
+		const extractionIds: string[] = [];
 		for (const [position, item] of values.items.entries()) {
 			const { data: extraction, error: extractionError } = await this.admin
 				.from("extractions")
@@ -232,10 +249,12 @@ export class TestData {
 			});
 			const inserts = [
 				this.admin.from("extraction_fields").insert(
-					(item.fieldIds ?? []).map((id, i) => ({
-						...base(i),
-						field_id: id,
-					})),
+					[
+						...(item.fieldIds ?? []).map((id) => ({ field_id: id })),
+						...(item.unresolvedFields ?? []).map((name) => ({
+							spoken_as: name,
+						})),
+					].map((link, i) => ({ ...base(i), ...link })),
 				),
 				this.admin
 					.from("extraction_crops")
@@ -251,8 +270,39 @@ export class TestData {
 			];
 			for (const { error: linkError } of await Promise.all(inserts))
 				if (linkError) throw linkError;
+			extractionIds.push(extraction.id);
+		}
+		// 根拠は、指す観察の id がわかってから入れる。
+		for (const [position, item] of values.items.entries()) {
+			const grounds = (item.grounds ?? []).map((ground, i) => ({
+				farm_id: farmId,
+				judgment_id: extractionIds[position] as string,
+				position: i,
+				...("observation" in ground
+					? { observation_id: extractionIds[ground.observation] }
+					: { body: ground.text }),
+			}));
+			if (grounds.length === 0) continue;
+			const { error: groundError } = await this.admin
+				.from("grounds")
+				.insert(grounds);
+			if (groundError) throw groundError;
 		}
 		return version.id;
+	}
+
+	/** 記録の最新の版の id。 */
+	async latestVersion(recordId: string): Promise<string> {
+		const { data, error } = await this.admin
+			.from("versions")
+			.select("id")
+			.eq("record_id", recordId)
+			.order("created_at", { ascending: false })
+			.order("id", { ascending: false })
+			.limit(1)
+			.single();
+		if (error) throw error;
+		return data.id;
 	}
 
 	async cleanUp() {

@@ -118,3 +118,27 @@ join farms f on f.id = r.farm_id
 where not exists (select 1 from versions v where v.record_id = r.id)
 order by r.received_at desc;
 ```
+
+## 訂正の回数と、訂正された記録の割合（月ごと）
+
+訂正すると人の版（`author = 'human'`）が 1 つ増え、訂正日時は版の `created_at` に残る。「訂正済みの記録」は人の版を 1 つ以上持つ記録で、作り直しの対象から外す条件と同じ。割合は構造化の質の目安になる（記録した月で数える）。
+
+```sql
+with per_record as (
+  select
+    date_trunc('month', r.recorded_at at time zone 'Asia/Tokyo')::date as month,
+    count(*) filter (where v.author = 'human') as corrections
+  from records r
+  join versions v on v.record_id = r.id
+  group by r.id, month
+)
+select
+  month,
+  count(*) as records,
+  count(*) filter (where corrections > 0) as corrected_records,
+  round(100.0 * count(*) filter (where corrections > 0) / count(*), 1) as corrected_percent,
+  sum(corrections) as corrections
+from per_record
+group by month
+order by month;
+```

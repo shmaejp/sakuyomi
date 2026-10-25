@@ -170,6 +170,7 @@ describe("記録処理関数", () => {
 			recordId,
 			versionId: expect.any(String),
 			transcript: "1番と2番ハウスのトマトに消毒した。葉に斑点が出ていたから。",
+			correction: null,
 			items: [
 				{
 					kind: "observation",

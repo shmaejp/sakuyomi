@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { CorrectionEditor } from "./CorrectionEditor";
 import { supabase } from "./lib/supabase";
 import {
 	locationWithin,
@@ -204,13 +205,38 @@ export function RecordPanel() {
 
 /** 送れた記録 1 件の即時応答。新しく送れたものから上に並ぶ。 */
 function SentResult({ sent: { record, response } }: { sent: SentRecord }) {
+	// 訂正したら、要約を新しい版で表示し直す。
+	const [summary, setSummary] = useState(
+		response.status === "summarized" ? response.summary : null,
+	);
+	const [correcting, setCorrecting] = useState(false);
 	return (
 		<article className="sent-record">
 			<p className="recorded-at">{timeOf(record.recordedAt)} の記録</p>
 			{record.photos.length > 0 && <Photos photos={record.photos} />}
-			{response.status === "summarized" ? (
+			{summary ? (
 				<>
-					<Summary summary={response.summary} />
+					{correcting ? (
+						<CorrectionEditor
+							summary={summary}
+							onSaved={(saved) => {
+								setSummary(saved);
+								setCorrecting(false);
+							}}
+							onCancel={() => setCorrecting(false)}
+						/>
+					) : (
+						<>
+							<Summary summary={summary} />
+							<button
+								type="button"
+								className="secondary"
+								onClick={() => setCorrecting(true)}
+							>
+								直す
+							</button>
+						</>
+					)}
 					<Related recordId={record.recordId} />
 				</>
 			) : (
@@ -323,6 +349,20 @@ function dayOf(date: string) {
 }
 
 function Summary({ summary }: { summary: RecordSummary }) {
+	return (
+		<>
+			{summary.correction && (
+				<p className="corrected">
+					訂正済み（{summary.correction.by.name}・
+					{timeOf(summary.correction.at)}）
+				</p>
+			)}
+			<SummaryItems summary={summary} />
+		</>
+	);
+}
+
+function SummaryItems({ summary }: { summary: RecordSummary }) {
 	if (summary.items.length === 0)
 		return <p>記録しました。取り出せる内容はありませんでした。</p>;
 	return (
