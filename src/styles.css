@@ -200,8 +200,23 @@ button:disabled {
 	gap: 8px;
 }
 
-.sent-record .recorded-at {
+.sent-record .recorded-at,
+.related-record .recorded-at,
+.related-status {
 	margin: 0;
 	color: var(--color-muted);
 	font-size: 0.9rem;
+}
+
+/* 即時応答の後半（直近の記録・去年の同じ時期の記録）。要約の下に、少し控えめに出す。 */
+.related {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.related-record {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
 }

@@ -17,12 +17,14 @@ import {
 	type Ground,
 	isPhotoType,
 	type Link,
-	type Material,
 	type Registered,
 	type RegisteredVariety,
 	type Structurer,
 	type Transcriber,
 } from "./parts.ts";
+import { loadSummary, type RecordSummary } from "./summary.ts";
+
+export type { RecordSummary, SummaryItem } from "./summary.ts";
 
 type Client = SupabaseClient<Database>;
 
@@ -31,37 +33,6 @@ export type RecordDeps = {
 	anonKey: string;
 	transcribe: Transcriber;
 	structure: Structurer;
-};
-
-/** 結びついた圃場・作目・品種。id が null なら未確定で、name は話の中の言い方。 */
-type Named = { id: string | null; name: string };
-
-/** 判断の根拠。observation は同じ要約の中の観察の位置で、文章だけの根拠なら null。text はどちらでも入る。 */
-type SummaryGround = { observation: number | null; text: string };
-
-export type SummaryItem = {
-	text: string;
-	/** 実施日（YYYY-MM-DD）。 */
-	performedOn: string;
-	fields: Named[];
-	crops: Named[];
-	varieties: Named[];
-} & (
-	| { kind: "observation" }
-	| {
-			kind: "judgment";
-			judge: { id: string; name: string };
-			grounds: SummaryGround[];
-	  }
-	| { kind: "work"; materials: Material[] }
-);
-
-export type RecordSummary = {
-	recordId: string;
-	versionId: string;
-	/** 写真だけの記録では null。 */
-	transcript: string | null;
-	items: SummaryItem[];
 };
 
 /**
@@ -534,116 +505,6 @@ function toGroundRow(ground: Ground) {
 	return "observation" in ground
 		? { observation: ground.observation }
 		: { body: ground.text };
-}
-
-/** 記録の最新の版から要約を作る。版がまだなければ null。 */
-async function loadSummary(
-	client: Client,
-	recordId: string,
-): Promise<RecordSummary | null> {
-	const { data: version, error } = await client
-		.from("versions")
-		.select(
-			`id, transcript,
-			extractions (
-				id, position, kind, body, performed_on, judge_member_id,
-				judge:farm_members!extractions_judge_member_id_fkey (display_name),
-				extraction_fields (position, field_id, spoken_as, fields (name)),
-				extraction_crops (position, crop_id, spoken_as, crops (name)),
-				extraction_varieties (position, variety_id, spoken_as, varieties (name)),
-				grounds!grounds_judgment_id_fkey (position, observation_id, body),
-				work_materials (position, name, amount, dilution)
-			)`,
-		)
-		.eq("record_id", recordId)
-		.order("created_at", { ascending: false })
-		.limit(1)
-		.maybeSingle();
-	if (error) throw error;
-	if (!version) return null;
-
-	const extractions = version.extractions.sort(byPosition);
-	const positionOf = new Map(extractions.map((e, i) => [e.id, i]));
-	const bodyOf = new Map(extractions.map((e) => [e.id, e.body]));
-	return {
-		recordId,
-		versionId: version.id,
-		transcript: version.transcript,
-		items: extractions.map((e): SummaryItem => {
-			const base = {
-				text: e.body,
-				performedOn: e.performed_on,
-				fields: named(
-					e.extraction_fields.map((l) => ({
-						...l,
-						id: l.field_id,
-						name: l.fields?.name,
-					})),
-				),
-				crops: named(
-					e.extraction_crops.map((l) => ({
-						...l,
-						id: l.crop_id,
-						name: l.crops?.name,
-					})),
-				),
-				varieties: named(
-					e.extraction_varieties.map((l) => ({
-						...l,
-						id: l.variety_id,
-						name: l.varieties?.name,
-					})),
-				),
-			};
-			if (e.kind === "observation") return { ...base, kind: "observation" };
-			if (e.kind === "work")
-				return {
-					...base,
-					kind: "work",
-					materials: e.work_materials
-						.sort(byPosition)
-						.map(({ name, amount, dilution }) => ({ name, amount, dilution })),
-				};
-			return {
-				...base,
-				kind: "judgment",
-				judge: {
-					id: e.judge_member_id ?? "",
-					name: e.judge?.display_name ?? "",
-				},
-				grounds: e.grounds.sort(byPosition).map((ground) =>
-					ground.observation_id
-						? {
-								observation: positionOf.get(ground.observation_id) ?? null,
-								text: bodyOf.get(ground.observation_id) ?? "",
-							}
-						: { observation: null, text: ground.body ?? "" },
-				),
-			};
-		}),
-	};
-}
-
-/** 結びつきを並び順に並べる。登録された圃場・作目・品種なら登録の名前、未確定なら話の中の言い方。 */
-function named(
-	links: {
-		position: number;
-		id: string | null;
-		name: string | undefined;
-		spoken_as: string | null;
-	}[],
-): Named[] {
-	return links
-		.sort(byPosition)
-		.map((link) =>
-			link.id
-				? { id: link.id, name: link.name ?? "" }
-				: { id: null, name: link.spoken_as ?? "" },
-		);
-}
-
-function byPosition(a: { position: number }, b: { position: number }) {
-	return a.position - b.position;
 }
 
 function respond(body: RecordResponse) {

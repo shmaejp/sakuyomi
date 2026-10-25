@@ -8,6 +8,11 @@ import {
 import { shrinkPhoto } from "./photo";
 import type { Sender } from "./queue";
 import { type RecordSummary, sendRecord } from "./record";
+import {
+	loadRelatedRecords,
+	type RelatedRecord,
+	type RelatedRecords,
+} from "./related";
 import { type SentRecord, useRecordQueue } from "./useRecordQueue";
 
 type State =
@@ -204,11 +209,81 @@ function SentResult({ sent: { record, response } }: { sent: SentRecord }) {
 			<p className="recorded-at">{timeOf(record.recordedAt)} の記録</p>
 			{record.photos.length > 0 && <Photos photos={record.photos} />}
 			{response.status === "summarized" ? (
-				<Summary summary={response.summary} />
+				<>
+					<Summary summary={response.summary} />
+					<Related recordId={record.recordId} />
+				</>
 			) : (
 				<p>記録は保存しました。要約は作れませんでした。</p>
 			)}
 		</article>
+	);
+}
+
+type RelatedState =
+	| { kind: "loading" }
+	| { kind: "loaded"; related: RelatedRecords }
+	| { kind: "failed" };
+
+/** 要約の後に、直近の記録と去年の同じ時期の記録を読んで表示する（要約を待たせないよう、要約が出てから読む）。 */
+function Related({ recordId }: { recordId: string }) {
+	const [state, setState] = useState<RelatedState>({ kind: "loading" });
+	useEffect(() => {
+		let active = true;
+		loadRelatedRecords(supabase, recordId).then(
+			(related) => active && setState({ kind: "loaded", related }),
+			() => active && setState({ kind: "failed" }),
+		);
+		return () => {
+			active = false;
+		};
+	}, [recordId]);
+
+	if (state.kind === "loading")
+		return <p className="related-status">過去の記録を読み込んでいます…</p>;
+	if (state.kind === "failed")
+		return <p className="related-status">過去の記録を読み込めませんでした。</p>;
+	return (
+		<>
+			<RelatedList
+				title="直近の記録"
+				records={state.related.recent}
+				empty="同じ圃場・作目の記録はまだありません。"
+			/>
+			<RelatedList
+				title="去年の同じ時期の記録"
+				records={state.related.lastYear}
+				empty="去年の同じ時期の記録はありません。"
+			/>
+		</>
+	);
+}
+
+function RelatedList({
+	title,
+	records,
+	empty,
+}: {
+	title: string;
+	records: RelatedRecord[];
+	empty: string;
+}) {
+	return (
+		<section className="related">
+			<h2>{title}</h2>
+			{records.length === 0 ? (
+				<p className="related-status">{empty}</p>
+			) : (
+				records.map((r) => (
+					<div key={r.recordId} className="related-record">
+						<p className="recorded-at">
+							{timeOf(r.recordedAt)}・{r.recorder.name}
+						</p>
+						<Summary summary={r.summary} />
+					</div>
+				))
+			)}
+		</section>
 	);
 }
 

@@ -23,6 +23,21 @@ export function anonClient(): Client {
 	);
 }
 
+type Enums = Database["public"]["Enums"];
+
+/** TestData.record で作る取り出し。結びつきは登録した圃場・作目・品種の id で渡す。 */
+export type TestItem = {
+	kind: Enums["extraction_kind"];
+	body: string;
+	/** 実施日（YYYY-MM-DD）。 */
+	performedOn: string;
+	fieldIds?: string[];
+	cropIds?: string[];
+	varietyIds?: string[];
+	/** 判断のときだけ。 */
+	judgeId?: string;
+};
+
 /**
  * テストごとに農場やユーザーを作り、終わったら片付ける。
  * 他のテストのデータと混ざらないよう、名前とメールアドレスには毎回別の接尾辞を付ける。
@@ -152,6 +167,92 @@ export class TestData {
 			.single();
 		if (error) throw error;
 		return data.id;
+	}
+
+	/**
+	 * 記録と、その版を 1 つ作る（記録処理関数を通さずに）。正本は置かず、音声の場所だけを入れる。
+	 * 取り出しは並べた順に入る。
+	 */
+	async record(
+		farmId: string,
+		values: {
+			recorderId: string;
+			recordedAt: string;
+			items: TestItem[];
+			author?: Enums["version_author"];
+		},
+	): Promise<string> {
+		const recordId = crypto.randomUUID();
+		const { error } = await this.admin.from("records").insert({
+			id: recordId,
+			farm_id: farmId,
+			recorder_member_id: values.recorderId,
+			recorded_at: values.recordedAt,
+			audio_path: `${farmId}/${recordId}/audio`,
+		});
+		if (error) throw error;
+		await this.version(farmId, recordId, {
+			author: values.author ?? "ai",
+			items: values.items,
+		});
+		return recordId;
+	}
+
+	/** 記録に版を足す。後から足した版が最新の版になる。 */
+	async version(
+		farmId: string,
+		recordId: string,
+		values: { author: Enums["version_author"]; items: TestItem[] },
+	): Promise<string> {
+		const { data: version, error } = await this.admin
+			.from("versions")
+			.insert({ farm_id: farmId, record_id: recordId, author: values.author })
+			.select("id")
+			.single();
+		if (error) throw error;
+		for (const [position, item] of values.items.entries()) {
+			const { data: extraction, error: extractionError } = await this.admin
+				.from("extractions")
+				.insert({
+					farm_id: farmId,
+					version_id: version.id,
+					position,
+					kind: item.kind,
+					body: item.body,
+					performed_on: item.performedOn,
+					judge_member_id: item.judgeId ?? null,
+				})
+				.select("id")
+				.single();
+			if (extractionError) throw extractionError;
+			const base = (i: number) => ({
+				farm_id: farmId,
+				extraction_id: extraction.id,
+				position: i,
+			});
+			const inserts = [
+				this.admin.from("extraction_fields").insert(
+					(item.fieldIds ?? []).map((id, i) => ({
+						...base(i),
+						field_id: id,
+					})),
+				),
+				this.admin
+					.from("extraction_crops")
+					.insert(
+						(item.cropIds ?? []).map((id, i) => ({ ...base(i), crop_id: id })),
+					),
+				this.admin.from("extraction_varieties").insert(
+					(item.varietyIds ?? []).map((id, i) => ({
+						...base(i),
+						variety_id: id,
+					})),
+				),
+			];
+			for (const { error: linkError } of await Promise.all(inserts))
+				if (linkError) throw linkError;
+		}
+		return version.id;
 	}
 
 	async cleanUp() {

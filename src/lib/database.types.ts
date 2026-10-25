@@ -199,6 +199,12 @@ isOneToOne: false
       foreignKeyName: "extractions_version_id_fkey"
       columns: ["version_id"]
 isOneToOne: false
+      referencedRelation: "latest_versions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "extractions_version_id_fkey"
+      columns: ["version_id"]
+isOneToOne: false
       referencedRelation: "versions"
       referencedColumns: ["id"]
     }
@@ -317,6 +323,12 @@ isOneToOne: false
       foreignKeyName: "record_metrics_version_id_fkey"
       columns: ["version_id"]
 isOneToOne: true
+      referencedRelation: "latest_versions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "record_metrics_version_id_fkey"
+      columns: ["version_id"]
+isOneToOne: true
       referencedRelation: "versions"
       referencedColumns: ["id"]
     }
@@ -428,10 +440,40 @@ isOneToOne: false
                 }
           }
           Views: {
-            [_ in never]: never
+            "latest_versions": {
+                  Row: {
+                    "farm_id": string,"id": string,"record_id": string
+                  }
+                  ComputedFields: never
+                  Relationships: [
+                    {
+      foreignKeyName: "versions_farm_id_fkey"
+      columns: ["farm_id"]
+isOneToOne: false
+      referencedRelation: "farms"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "versions_record_id_fkey"
+      columns: ["record_id"]
+isOneToOne: false
+      referencedRelation: "records"
+      referencedColumns: ["id"]
+    }
+                  ]
+                }
           }
           Functions: {
-            "save_ai_version":
+            "last_year_records":
+{ Args: { "season_days": number,"target_record_id": string }; Returns: {
+              "record_id": string
+            }[]
+                           },
+"recent_records":
+{ Args: { "max_count": number,"target_record_id": string }; Returns: {
+              "record_id": string
+            }[]
+                           },
+"save_ai_version":
 { Args: { "items": Json,"metrics": Json,"target_record_id": string,"transcript"?: string }; Returns: string
                            }
           }
